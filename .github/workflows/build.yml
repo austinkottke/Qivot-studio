@@ -1,0 +1,69 @@
+name: Build
+
+# Builds Qivot Studio on macOS, Windows and Linux and runs ctest: the core tests
+# plus a smoke test that loads the whole app offscreen and fails on any QML warning.
+# One extra job builds against Qt 5.15, which Studio still supports.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS,          os: macos-15,       qt: 6.8.3,  arch: clang_64 }
+          - { name: Windows,        os: windows-latest, qt: 6.8.3,  arch: win64_msvc2022_64 }
+          - { name: Linux,          os: ubuntu-24.04,   qt: 6.8.3,  arch: linux_gcc_64 }
+          - { name: Linux (Qt 5.15), os: ubuntu-22.04,  qt: 5.15.2, arch: gcc_64 }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt ${{ matrix.qt }}
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ matrix.qt }}
+          arch: ${{ matrix.arch }}
+          cache: true
+
+      # Qt Quick's offscreen platform still needs GL and font libraries on Linux.
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1-mesa-dev libegl1 libxkbcommon0 libfontconfig1
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      # A screenshot of the real app on every run, so UI changes are visible in review.
+      - name: Screenshot
+        if: runner.os == 'macOS'
+        run: |
+          "build/app/Qivot Studio.app/Contents/MacOS/Qivot Studio" \
+            --sample --table book --light --shot studio.png
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS'
+        with:
+          name: screenshot
+          path: studio.png
+          if-no-files-found: ignore

@@ -1,0 +1,2 @@
+// The Windows app icon (made by tools/make-icon.py).
+IDI_ICON1 ICON "QivotStudio.ico"

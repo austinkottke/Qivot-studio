@@ -1,0 +1,10 @@
+build/
+build-*/
+*.user
+.DS_Store
+.qtcreator/
+CMakeLists.txt.user*
+
+# Release packaging (tools/package-macos.sh)
+build-release/
+dist/

@@ -1,0 +1,73 @@
+# PostgreSQL, MySQL and SQL Server, each with Qivot Studio's sample databases
+# (bookshop, university, company, music) loaded on first start.
+#
+#   docker compose -f tools/sample-servers/docker-compose.yml up -d
+#
+# Then in Studio: Connect to Server… > "Sample servers" fills these in.
+#
+#   PostgreSQL  localhost:55432  user qivot  password qivot
+#   MySQL       localhost:53306  user root   password qivot
+#   SQL Server  localhost:51433  user sa     password Qivot_Samples1
+#
+# The ports are unusual on purpose, to stay out of the way of servers you
+# already run. `down -v` removes the data; the next `up` loads it again.
+name: qivot-samples
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: qivot
+      POSTGRES_PASSWORD: qivot
+    restart: unless-stopped
+    ports: ["55432:5432"]
+    volumes:
+      - ./sql/postgres:/docker-entrypoint-initdb.d:ro
+      - postgres:/var/lib/postgresql/data
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: qivot
+    restart: unless-stopped
+    ports: ["53306:3306"]
+    volumes:
+      - ./sql/mysql:/docker-entrypoint-initdb.d:ro
+      - mysql:/var/lib/mysql
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64            # Microsoft only builds it for Intel; Docker Desktop emulates it on Apple Silicon
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: Qivot_Samples1
+    restart: unless-stopped
+    ports: ["51433:1433"]
+    volumes:
+      - sqlserver:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  # SQL Server has no init folder: this loads the samples into it once it's up
+  # (and skips any already there), then exits.
+  sqlserver-samples:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      MSSQL_SA_PASSWORD: Qivot_Samples1
+    volumes:
+      - ./sql/sqlserver:/sql:ro
+      - ./load-sqlserver.sh:/load-sqlserver.sh:ro
+    entrypoint: ["/bin/bash", "/load-sqlserver.sh"]
+    restart: "no"
+
+volumes:
+  postgres:
+  mysql:
+  sqlserver:

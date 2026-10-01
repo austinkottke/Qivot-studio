@@ -1,0 +1,30 @@
+# Qt 5 has no qt_add_qml_module, so write the resource file it would have
+# made: Studio's screens plus the QivotUI module with its qmldir. Uses the
+# file lists from ui/ and app/, so there is nothing to keep in sync by hand.
+function(studio_qt5_resources qrc)
+    set(ui ${PROJECT_SOURCE_DIR}/ui)
+    set(app ${PROJECT_SOURCE_DIR}/app)
+    set(qmldir "module QivotUI\n")
+    set(entries "")
+    foreach(f ${QIVOTUI_QML_FILES})
+        get_filename_component(type ${f} NAME_WE)
+        if(type STREQUAL "Theme")
+            string(APPEND qmldir "singleton ${type} 1.0 ${f}\n")
+        else()
+            string(APPEND qmldir "${type} 1.0 ${f}\n")
+        endif()
+        string(APPEND entries "    <file alias=\"qml/QivotUI/${f}\">${ui}/${f}</file>\n")
+    endforeach()
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/qivotui_qmldir "${qmldir}")
+    string(APPEND entries "    <file alias=\"qml/QivotUI/qmldir\">${CMAKE_CURRENT_BINARY_DIR}/qivotui_qmldir</file>\n")
+
+    foreach(f ${STUDIO_QML_FILES})
+        get_filename_component(name ${f} NAME)
+        set(src ${app}/${f})
+        if(EXISTS ${PROJECT_SOURCE_DIR}/compat/qt5/${name})   # a Qt 5 variant wins
+            set(src ${PROJECT_SOURCE_DIR}/compat/qt5/${name})
+        endif()
+        string(APPEND entries "    <file alias=\"qml/QivotStudio/${name}\">${src}</file>\n")
+    endforeach()
+    file(WRITE ${qrc} "<RCC>\n  <qresource prefix=\"/\">\n${entries}  </qresource>\n</RCC>\n")
+endfunction()

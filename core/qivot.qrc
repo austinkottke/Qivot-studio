@@ -1,0 +1,9 @@
+<!-- Qivot's single header, so exported projects can carry it (ProjectExport). -->
+<RCC>
+  <qresource prefix="/qivot">
+    <file alias="qivot.hpp">../third_party/qivot/qivot.hpp</file>
+    <file alias="qivot.cpp">../third_party/qivot/qivot.cpp</file>
+    <file alias="LICENSE.txt">../third_party/qivot/LICENSE.txt</file>
+    <file alias="NOTICE.txt">../third_party/qivot/NOTICE.txt</file>
+  </qresource>
+</RCC>
