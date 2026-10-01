@@ -14,7 +14,10 @@ namespace {
 
 using C = SampleSchema::Column;
 
-// A tiny deterministic generator: the samples must be identical on every run.
+// A tiny deterministic generator: the samples must be identical on every run,
+// and on every compiler. So never two rng calls in one expression whose order
+// C++ leaves open (a + b, f(rng, rng)): each gets its own statement. (Braced
+// lists, ?:, and comma-separated declarations are ordered, and fine.)
 struct Rng {
     quint32 state;
     quint32 next() { state = state * 1664525u + 1013904223u; return state >> 8; }
@@ -118,7 +121,8 @@ SampleSchema bookshop()
         s.insert("author", { i + 1, first, last, born, rng.pick(kCountries) });
     }
     for (int i = 0; i < nBooks; ++i) {
-        const QString title = rng.pick(kTitleA) + QLatin1Char(' ') + rng.pick(kTitleB);
+        const QString titleA = rng.pick(kTitleA);
+        const QString title = titleA + QLatin1Char(' ') + rng.pick(kTitleB);
         const int author = rng.range(1, nAuthors);
         const QVariant publisher = i % 17 == 0 ? null() : QVariant(rng.range(1, kPublishers.size()));
         const int published = rng.range(1950, 2026);
@@ -288,7 +292,8 @@ SampleSchema university()
             const int number = level + 1 + (n % 5) * 10 + rng.range(0, 8);
             QString title;
             do {
-                title = rng.pick(kCoursePatterns).arg(rng.pick(dep.topics));
+                const QString pattern = rng.pick(kCoursePatterns);
+                title = pattern.arg(rng.pick(dep.topics));
             } while (titles.contains(title));
             titles.insert(title);
             ++courseId;
@@ -528,7 +533,9 @@ SampleSchema company()
         const bool manager = rng.chance(9);
         const int job = manager ? 2 : rng.pick(kDepartmentJobs.at(d - 1));
         const QDate hired = QDate(2012, 1, 9).addDays(rng.range(0, 4800));
-        person(++id, job, d, rng.pick(leads.value(d)), hired, rng.chance(92));
+        const int reportsTo = rng.pick(leads.value(d));
+        const bool active = rng.chance(92);
+        person(++id, job, d, reportsTo, hired, active);
         if (manager)
             leads[d] << id;
     }
@@ -572,7 +579,10 @@ SampleSchema company()
     QSet<QString> names;
     for (int p = 1; p <= 64; ++p) {
         QString name;
-        do { name = rng.pick(kProjectA) + QLatin1Char(' ') + rng.pick(kProjectB); } while (names.contains(name));
+        do {
+            const QString a = rng.pick(kProjectA);
+            name = a + QLatin1Char(' ') + rng.pick(kProjectB);
+        } while (names.contains(name));
         names.insert(name);
         const QDate starts = QDate(2019, 1, 7).addDays(rng.range(0, 2300));
         s.insert("project", { p, QStringLiteral("PRJ-%1").arg(1000 + p), name,
@@ -682,10 +692,10 @@ SampleSchema music()
         QString name;
         do {
             switch (rng.range(0, 3)) {
-            case 0: name = QStringLiteral("The ") + rng.pick(kBandA) + QLatin1Char(' ') + rng.pick(kBandB); break;
-            case 1: name = rng.pick(kFirst) + QLatin1Char(' ') + rng.pick(kLast); break;
-            case 2: name = rng.pick(kBandA) + QLatin1Char(' ') + rng.pick(kBandB); break;
-            default: name = rng.pick(kFirst) + QLatin1Char(' ') + rng.pick(kLast) + QStringLiteral(" Quartet"); break;
+            case 0: { const QString a = rng.pick(kBandA); name = QStringLiteral("The ") + a + QLatin1Char(' ') + rng.pick(kBandB); break; }
+            case 1: { const QString a = rng.pick(kFirst); name = a + QLatin1Char(' ') + rng.pick(kLast); break; }
+            case 2: { const QString a = rng.pick(kBandA); name = a + QLatin1Char(' ') + rng.pick(kBandB); break; }
+            default: { const QString a = rng.pick(kFirst); name = a + QLatin1Char(' ') + rng.pick(kLast) + QStringLiteral(" Quartet"); break; }
             }
         } while (taken.contains(name));
         taken.insert(name);
@@ -710,9 +720,16 @@ SampleSchema music()
             const int ms = rng.range(95000, 480000);
             const qint64 cents = media == 4 ? 129 : 99;
             const QVariant genre = rng.chance(3) ? null() : QVariant(rng.chance(85) ? artistGenre.value(artist) : rng.range(1, kGenres.size()));
-            const QVariant composer = rng.chance(35) ? null()
-                : QVariant(rng.pick(kFirst) + QLatin1Char(' ') + rng.pick(kLast)
-                           + (rng.chance(30) ? QStringLiteral(", ") + rng.pick(kFirst) + QLatin1Char(' ') + rng.pick(kLast) : QString()));
+            QVariant composer;
+            if (!rng.chance(35)) {
+                const QString first = rng.pick(kFirst);
+                QString who = first + QLatin1Char(' ') + rng.pick(kLast);
+                if (rng.chance(30)) {
+                    const QString second = rng.pick(kFirst);
+                    who += QStringLiteral(", ") + second + QLatin1Char(' ') + rng.pick(kLast);
+                }
+                composer = who;
+            }
             s.insert("track", { ++trackId, title(), al, genre, media, composer, ms,
                                 rng.chance(5) ? null() : QVariant(qint64(ms) * (media == 3 ? 110 : 32)), money(cents) });
             tracks << Track{ trackId, cents };
@@ -762,7 +779,9 @@ SampleSchema music()
     int lineId = 0;
     for (int i = 1; i <= 5200; ++i) {
         const int customer = rng.range(1, nCustomers);
-        const QDateTime at(QDate(2021, 1, 4).addDays(rng.range(0, 1730)), QTime(rng.range(0, 23), rng.range(0, 59), rng.range(0, 59)));
+        const int day = rng.range(0, 1730);
+        const int hour = rng.range(0, 23), minute = rng.range(0, 59), second = rng.range(0, 59);
+        const QDateTime at(QDate(2021, 1, 4).addDays(day), QTime(hour, minute, second));
         const int lines = rng.range(1, 6);
         qint64 total = 0;
         QVector<QVariantList> items;
