@@ -24,44 +24,133 @@
 
 <table>
   <tr>
-    <td width="33%"><a href="docs/studio-diagram.png"><img src="docs/studio-diagram.png" alt="The ER diagram of the Chinook database, with the Track table found and its relationships highlighted"></a></td>
-    <td width="33%"><a href="docs/studio-data.png"><img src="docs/studio-data.png" alt="Browsing the Track table's rows, with row 3 open in the inspector"></a></td>
-    <td width="33%"><a href="docs/studio-profile.png"><img src="docs/studio-profile.png" alt="The book table's column profiles: how full each column is, distinct values, ranges, histograms and the commonest values"></a></td>
+    <td width="560"><a href="docs/studio-diagram.png"><img src="docs/feature-diagram.png" width="560" alt="The ER diagram of the Chinook database, with the Track table found and its relationships highlighted"></a></td>
+    <td width="280">
+      <sub><b>DIAGRAM</b></sub>
+      <h3>The whole schema at a<br>glance</h3>
+      <p>Every table as a card, every<br>foreign key as a line in<br>crow's-foot notation, laid out<br>along the relationships. Zoom<br>with the wheel, pan, find a<br>table and hover it to light up<br>everything it connects to.<br>Exports as PNG, SVG or PDF.</p>
+    </td>
   </tr>
+</table>
+
+<table>
   <tr>
-    <td align="center"><sub><b>Diagram</b>: the whole schema, laid out along its keys</sub></td>
-    <td align="center"><sub><b>Data</b>: any table, sorted and filtered in SQL, millions of rows</sub></td>
-    <td align="center"><sub><b>Profile</b>: how full, how varied, and the shape of every column</sub></td>
+    <td width="280">
+      <sub><b>DATA</b></sub>
+      <h3>Any table, millions of<br>rows</h3>
+      <p>Sorting and filtering run in SQL<br>and only the rows on screen are<br>fetched, so huge tables scroll<br>smoothly. Click a row to see<br>every value in full; export to<br>CSV or JSON.</p>
+    </td>
+    <td width="560"><a href="docs/studio-data.png"><img src="docs/feature-data.png" width="560" alt="Browsing the Track table's rows, with row 3 open in the inspector"></a></td>
   </tr>
+</table>
+
+<table>
   <tr>
-    <td width="33%"><a href="docs/studio-builder.png"><img src="docs/studio-builder.png" alt="The query builder: books joined to authors, counted and averaged per country, filtered and sorted, with the SQL it writes and the result"></a></td>
-    <td width="33%"><a href="docs/studio-query.png"><img src="docs/studio-query.png" alt="The SQL console running a top-artists-by-revenue query, with syntax highlighting"></a></td>
-    <td width="33%"><a href="docs/studio-structure.png"><img src="docs/studio-structure.png" alt="The structure of the Track table: columns with key badges, foreign keys, the tables that reference it, and indexes"></a></td>
+    <td width="560"><a href="docs/studio-editing.png"><img src="docs/feature-editing.png" width="560" alt="Editing the publisher table: an edited cell, a value set to NULL, a deleted row and a new one, with the unsaved changes ready to review as SQL and save"></a></td>
+    <td width="280">
+      <sub><b>EDITING</b></sub>
+      <h3>Change rows, then undo</h3>
+      <p>Edit cells, add and delete rows,<br>set NULLs. Every change is<br>marked in the grid and shown as<br>SQL before it runs; save in one<br>transaction, and undo the save<br>if you need to.</p>
+    </td>
   </tr>
+</table>
+
+<table>
   <tr>
-    <td align="center"><sub><b>Query builder</b>: joins along the keys, totals, filters; SQL and Qivot C++</sub></td>
-    <td align="center"><sub><b>SQL console</b>: read-only on every database</sub></td>
-    <td align="center"><sub><b>Structure</b>: columns, keys, relationships both ways, indexes</sub></td>
+    <td width="280">
+      <sub><b>PROFILE</b></sub>
+      <h3>The shape of every<br>column</h3>
+      <p>How full each column is, how<br>many distinct values, the range,<br>and a histogram or the commonest<br>values, profiled in the<br>background.</p>
+    </td>
+    <td width="560"><a href="docs/studio-profile.png"><img src="docs/feature-profile.png" width="560" alt="The book table's column profiles: how full each column is, distinct values, ranges, histograms and the commonest values"></a></td>
   </tr>
+</table>
+
+<table>
   <tr>
-    <td width="33%"><a href="docs/studio-migration.png"><img src="docs/studio-migration.png" alt="The designer's SQL tab: the changes in words and the SQLite migration that makes them"></a></td>
-    <td width="33%"><a href="docs/studio-cpp.png"><img src="docs/studio-cpp.png" alt="The book table's C++ tab: its Qivot model class, ready to copy"></a></td>
-    <td width="33%"><a href="docs/studio-ide.png"><img src="docs/studio-ide.png" alt="The exported project open in the IDE, with all eight model tests passing"></a></td>
+    <td width="560"><a href="docs/studio-query.png"><img src="docs/feature-query.png" width="560" alt="The SQL console running a top-artists-by-revenue query, with syntax highlighting"></a></td>
+    <td width="280">
+      <sub><b>SQL CONSOLE</b></sub>
+      <h3>Read-only on every<br>database</h3>
+      <p>Syntax highlighting and<br>autocomplete that knows the<br>query: tables after FROM,<br>columns after<br><code>alias.</code>. History and<br>saved queries per database.</p>
+    </td>
   </tr>
+</table>
+
+<table>
   <tr>
-    <td align="center"><sub><b>Migration</b>: the SQL a design needs, checked against the data</sub></td>
-    <td align="center"><sub><b>C++</b>: a Qivot model class for every table</sub></td>
-    <td align="center"><sub><b>IDE</b>: the exported project, built and tested in Studio</sub></td>
+    <td width="280">
+      <sub><b>PLAN</b></sub>
+      <h3>How the database would<br>run it</h3>
+      <p>Explain (⇧⌘↩) shows the plan<br>without running the query: a<br>tree of steps with estimated<br>rows and cost, and every full<br>table scan flagged. SQLite,<br>PostgreSQL, MySQL and SQL<br>Server.</p>
+    </td>
+    <td width="560"><a href="docs/studio-plan.png"><img src="docs/feature-plan.png" width="560" alt="A query's plan: four steps, one reading a whole table without an index, highlighted; the history of queries beside it"></a></td>
   </tr>
+</table>
+
+<table>
   <tr>
-    <td width="33%"><a href="docs/studio-editing.png"><img src="docs/studio-editing.png" alt="Editing the publisher table: an edited cell, a value set to NULL, a deleted row and a new one, with the unsaved changes ready to review as SQL and save"></a></td>
-    <td width="33%"><a href="docs/studio-compare.png"><img src="docs/studio-compare.png" alt="Comparing the bookshop with a changed copy: four differences and the migration that makes the copy match"></a></td>
-    <td width="33%"><a href="docs/studio-plan.png"><img src="docs/studio-plan.png" alt="A query's plan: four steps, one reading a whole table without an index, highlighted; the history of queries beside it"></a></td>
+    <td width="560"><a href="docs/studio-builder.png"><img src="docs/feature-builder.png" width="560" alt="The query builder: books joined to authors, counted and averaged per country, filtered and sorted, with the SQL it writes and the result"></a></td>
+    <td width="280">
+      <sub><b>QUERY BUILDER</b></sub>
+      <h3>Joins along the keys</h3>
+      <p>Pick a table, join related ones<br>along their foreign keys, count,<br>sum and average, filter and<br>sort. The SQL and the same query<br>as Qivot C++ follow every<br>change.</p>
+    </td>
   </tr>
+</table>
+
+<table>
   <tr>
-    <td align="center"><sub><b>Editing</b>: change, add and delete rows; review the SQL; save, then undo</sub></td>
-    <td align="center"><sub><b>Compare</b>: two databases' structures, and the SQL between them</sub></td>
-    <td align="center"><sub><b>Plan</b>: how the database would run a query, full scans flagged</sub></td>
+    <td width="280">
+      <sub><b>STRUCTURE</b></sub>
+      <h3>Columns, keys and<br>indexes</h3>
+      <p>Declared types, NOT NULL,<br>defaults and key badges; the<br>foreign keys a table holds and<br>the tables that reference it,<br>one click to jump there; every<br>index.</p>
+    </td>
+    <td width="560"><a href="docs/studio-structure.png"><img src="docs/feature-structure.png" width="560" alt="The structure of the Track table: columns with key badges, foreign keys, the tables that reference it, and indexes"></a></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="560"><a href="docs/studio-compare.png"><img src="docs/feature-compare.png" width="560" alt="Comparing the bookshop with a changed copy: four differences and the migration that makes the copy match"></a></td>
+    <td width="280">
+      <sub><b>COMPARE</b></sub>
+      <h3>Two databases, and the<br>SQL between them</h3>
+      <p>Compare a file, a server or a<br>sample with another: the<br>differences, and the migration<br>that makes either one match, to<br>copy, save or apply.</p>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="280">
+      <sub><b>MIGRATION</b></sub>
+      <h3>Designs checked<br>against the data</h3>
+      <p>Every design change becomes SQL<br>in the database's own dialect.<br>Required columns with NULLs,<br>duplicate values in a unique<br>column, references that point<br>nowhere: each problem is caught<br>before anything runs.</p>
+    </td>
+    <td width="560"><a href="docs/studio-migration.png"><img src="docs/feature-migration.png" width="560" alt="The designer's SQL tab: the changes in words and the SQLite migration that makes them"></a></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="560"><a href="docs/studio-cpp.png"><img src="docs/feature-cpp.png" width="560" alt="The book table's C++ tab: its Qivot model class, ready to copy"></a></td>
+    <td width="280">
+      <sub><b>C++</b></sub>
+      <h3>A Qivot model class<br>for every table</h3>
+      <p>Following Qivot's real rules: a<br>field per column,<br><code>QiForeignKey</code> where<br>Qivot can follow it, and a note<br>for anything it can't map.</p>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="280">
+      <sub><b>IDE</b></sub>
+      <h3>Build, test and run<br>without leaving Studio</h3>
+      <p>Export a CMake project with the<br>models, an example and a test<br>per model, then build ⌘B, test<br>⌘U and run ⌘R, with the<br>compiler's problems a click from<br>the line.</p>
+    </td>
+    <td width="560"><a href="docs/studio-ide.png"><img src="docs/feature-ide.png" width="560" alt="The exported project open in the IDE, with all eight model tests passing"></a></td>
   </tr>
 </table>
 
