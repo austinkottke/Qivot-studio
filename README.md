@@ -6,10 +6,16 @@
   <a href="https://github.com/austinkottke/Qivot-studio/actions/workflows/build.yml"><img src="https://github.com/austinkottke/Qivot-studio/actions/workflows/build.yml/badge.svg" alt="Build"></a>
   <img src="https://img.shields.io/badge/Qt-6.8-41CD52?logo=qt&logoColor=white" alt="Qt 6.8">
   <img src="https://img.shields.io/badge/Qt-5.15-41CD52?logo=qt&logoColor=white" alt="Qt 5.15">
-  <img src="https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white" alt="macOS">
-  <img src="https://img.shields.io/badge/Windows-0078D6" alt="Windows">
-  <img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black" alt="Linux">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/austinkottke/Qivot-studio/releases"><img src="https://img.shields.io/github/v/release/austinkottke/Qivot-studio?label=Download&include_prereleases&color=2ea44f&style=for-the-badge" alt="Download the latest release"></a>
+  <br>
+  <a href="https://github.com/austinkottke/Qivot-studio/releases"><img src="https://img.shields.io/badge/macOS-Apple%20Silicon-000000?logo=apple&logoColor=white&style=for-the-badge" alt="macOS, Apple Silicon"></a>
+  <a href="https://github.com/austinkottke/Qivot-studio/releases"><img src="https://img.shields.io/badge/macOS-Intel-555555?logo=apple&logoColor=white&style=for-the-badge" alt="macOS, Intel"></a>
+  <a href="https://github.com/austinkottke/Qivot-studio/releases"><img src="https://img.shields.io/badge/Windows-x64-0078D6?style=for-the-badge" alt="Windows x64"></a>
+  <a href="https://github.com/austinkottke/Qivot-studio/releases"><img src="https://img.shields.io/badge/Linux-AppImage-FCC624?logo=linux&logoColor=black&style=for-the-badge" alt="Linux AppImage"></a>
 </p>
 
 <p align="center">
