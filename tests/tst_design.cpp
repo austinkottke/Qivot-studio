@@ -6,6 +6,7 @@
 #include "databasesession.h"
 #include "sampledatabase.h"
 #include "schemadesign.h"
+#include "sqlscript.h"
 
 /// The class designer's model: edits, undo, the generated C++, and the
 /// migration — which is applied to a copy of the sample and read back.
@@ -306,6 +307,75 @@ private slots:
         // A table with a two-column key can't be referenced this way.
         QVERIFY(d.addReference("book", "order_item").isEmpty());
         QVERIFY(!d.error().isEmpty());
+    }
+
+    // Scripts split at the semicolons that end statements, and nowhere else.
+    void splitsScripts()
+    {
+        const QStringList s = SqlScript::split(
+            "-- a comment; with a semicolon\n"
+            "CREATE TABLE t (a TEXT DEFAULT 'x;y', b TEXT);\n"
+            "INSERT INTO t VALUES ('it''s; fine', \"q;q\");/* c; c */\n"
+            "SELECT [odd;name] FROM t\nGO\n"
+            "SELECT 1;;\n");
+        QCOMPARE(s.size(), 4);
+        QCOMPARE(s.at(0), QString("CREATE TABLE t (a TEXT DEFAULT 'x;y', b TEXT)"));
+        QCOMPARE(s.at(1), QString("INSERT INTO t VALUES ('it''s; fine', \"q;q\")"));
+        QCOMPARE(s.at(2), QString("SELECT [odd;name] FROM t"));
+        QCOMPARE(s.at(3), QString("SELECT 1"));
+        QVERIFY(SqlScript::split("SELECT 'GO'\nGOTO").size() == 1);   // not a batch separator
+    }
+
+    // Applying to the database itself: only once changes are allowed, with a
+    // backup, and the design starts again from the result.
+    void appliesToTheDatabase()
+    {
+        QTemporaryDir dir;
+        const QString file = dir.filePath("shop.db");
+        QVERIFY(QFile::copy(m_sample, file));
+        DatabaseSession db;
+        QVERIFY(db.open(file));
+        SchemaDesign d;
+        d.setAutosaveEnabled(false);
+        d.setSession(&db);
+        d.addColumn("book", "subtitle", "TEXT");
+        const int col = columnIndex(d, "book", "price");
+        QVERIFY(d.updateColumn("book", col, { { "defaultValue", "12.5" } }));     // a rebuild (SQLite)
+
+        QVariantMap r = d.applyToDatabase();
+        QVERIFY(!r.value("ok").toBool());                                         // not allowed yet
+        QVERIFY(r.value("error").toString().contains("Allow changes"));
+        QVERIFY(!db.changesAllowed());
+
+        QVERIFY2(db.allowChanges(true), qPrintable(db.error()));
+        r = d.applyToDatabase();
+        QVERIFY2(r.value("ok").toBool(), qPrintable(r.value("error").toString() + "\n" + r.value("failedStatement").toString()));
+        QVERIFY(QFileInfo::exists(r.value("backup").toString()));                 // the copy beside it
+        QVERIFY(r.value("backup").toString().contains("shop.backup-"));
+        QVERIFY(d.changes().isEmpty());                                           // the design is the database now
+        QVERIFY(db.table("book").value("columns").toList().last().toMap().value("name") == "subtitle");
+        // The rows survived the rebuild, and the reading connection is still read-only.
+        QCOMPARE(db.table("book").value("rows").toLongLong(), qint64(1200));
+        QSqlQuery q(QSqlDatabase::database(db.connectionName()));
+        QVERIFY(!q.exec("DELETE FROM review"));
+
+        // A failure changes nothing.
+        d.addColumn("review", "score", "INTEGER");
+        QVERIFY(d.updateColumn("review", columnIndex(d, "review", "score"), { { "nullable", false } }));
+        QVERIFY(d.updateColumn("review", columnIndex(d, "review", "score"), { { "defaultValue", "1" } }));
+        QVERIFY(d.addTable("tag").length());
+        QSqlQuery w(db.writeDatabase());
+        QVERIFY(w.exec("CREATE TABLE tag (x INTEGER)"));                          // the design's new table is taken
+        r = d.applyToDatabase();
+        QVERIFY(!r.value("ok").toBool());
+        QVERIFY2(r.value("error").toString().contains("nothing was changed"), qPrintable(r.value("error").toString()));
+        db.refresh();
+        bool hasScore = false;
+        for (const QVariant &c : db.table("review").value("columns").toList())
+            hasScore = hasScore || c.toMap().value("name") == "score";
+        QVERIFY(!hasScore);
+        db.allowChanges(false);
+        QVERIFY(!db.writeDatabase().isValid());
     }
 
     void saveAndOpen()

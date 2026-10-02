@@ -5,6 +5,10 @@ set(STUDIOCORE_SOURCES
     databasesession.h databasesession.cpp
     sampledatabase.h  sampledatabase.cpp
     sampleschema.h    sampleschema.cpp
+    sqlscript.h       sqlscript.cpp
+    datatransfer.h    datatransfer.cpp
+    schemacompare.h   schemacompare.cpp
+    diagramexport.h   diagramexport.cpp
     rowsmodel.h       rowsmodel.cpp
     erlayout.h        erlayout.cpp
     diagramgeometry.h

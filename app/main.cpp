@@ -52,6 +52,9 @@ Q_IMPORT_QML_PLUGIN(QivotUIPlugin)
 #include "projectbuild.h"
 #include "querybuilder.h"
 #include "tableprofile.h"
+#include "datatransfer.h"
+#include "schemacompare.h"
+#include "diagramexport.h"
 #include "schemadesign.h"
 #include "querymodel.h"
 #include "rowsmodel.h"
@@ -96,6 +99,9 @@ void registerQt5Types()
     qmlRegisterType<SchemaDesign>(uri, 1, 0, "Design");
     qmlRegisterType<QueryBuilder>(uri, 1, 0, "QueryBuilder");
     qmlRegisterType<TableProfile>(uri, 1, 0, "Profile");
+    qmlRegisterType<CsvImport>(uri, 1, 0, "CsvImport");
+    qmlRegisterType<SchemaCompare>(uri, 1, 0, "SchemaCompare");
+    qmlRegisterType<DiagramExport>(uri, 1, 0, "DiagramExport");
     qmlRegisterSingletonType<DiagramGeometry>(uri, 1, 0, "DiagramGeometry", createSingleton<DiagramGeometry>);
     qmlRegisterSingletonType<Prefs>(uri, 1, 0, "Prefs", createSingleton<Prefs>);
 }
@@ -189,6 +195,16 @@ int main(int argc, char *argv[])
     const QCommandLineOption projectsDir(QStringLiteral("projects-dir"),
                                          QStringLiteral("Put exported projects in <folder> (default ~/Documents/Qivot Projects)."),
                                          QStringLiteral("folder"));
+    const QCommandLineOption allowChanges(QStringLiteral("allow-changes"),
+                                          QStringLiteral("Allow changes to the database once it's open."));
+    const QCommandLineOption editDemo(QStringLiteral("edit-demo"),
+                                      QStringLiteral("On the Data tab, start with a few unsaved edits (with --allow-changes)."));
+    const QCommandLineOption compareWith(QStringLiteral("compare-with"),
+                                         QStringLiteral("On the Compare screen, compare with <file> (or sample:<id>)."),
+                                         QStringLiteral("file"));
+    const QCommandLineOption exportDiagram(QStringLiteral("export-diagram"),
+                                           QStringLiteral("Save the diagram to <file> (.png, .svg or .pdf) once it's laid out."),
+                                           QStringLiteral("file"));
     const QCommandLineOption wheel(QStringLiteral("wheel"),
                                    QStringLiteral("Scroll a mouse wheel <notches> (e.g. 3 or -2) at the middle of the window (tests)."),
                                    QStringLiteral("notches"));
@@ -198,7 +214,7 @@ int main(int argc, char *argv[])
     const QCommandLineOption shotDelay(QStringLiteral("shot-delay"),
                                        QStringLiteral("Wait <ms> before --shot / --smoke quit (default 1500)."),
                                        QStringLiteral("ms"));
-    cli.addOptions({ models, exportTo, queryBuilder, builderDemo, buildProject, projectFolder, designDemo, designMenu, designTab, projectsDir, shotDelay, wheel, wheelPixels, sample, openSample, sampleSql, shot, smoke, table, view, connect, connectDialog, queryText, size, find, selectRow,
+    cli.addOptions({ models, exportTo, queryBuilder, builderDemo, buildProject, projectFolder, designDemo, designMenu, designTab, projectsDir, shotDelay, allowChanges, editDemo, compareWith, exportDiagram, wheel, wheelPixels, sample, openSample, sampleSql, shot, smoke, table, view, connect, connectDialog, queryText, size, find, selectRow,
                     dark, light });
     cli.process(app);
 
@@ -259,6 +275,10 @@ int main(int argc, char *argv[])
         { QStringLiteral("startupFile"),   cli.positionalArguments().value(0) },
         { QStringLiteral("startupSample"), cli.isSet(sample) || cli.isSet(openSample) },
         { QStringLiteral("startupSampleId"), cli.value(openSample) },
+        { QStringLiteral("startupAllowChanges"), cli.isSet(allowChanges) },
+        { QStringLiteral("startupEditDemo"), cli.isSet(editDemo) },
+        { QStringLiteral("startupCompare"), cli.value(compareWith) },
+        { QStringLiteral("startupExportDiagram"), cli.value(exportDiagram) },
         { QStringLiteral("startupTable"),  cli.value(table) },
         { QStringLiteral("detailTab"),     cli.value(view) == QLatin1String("data") ? 1
                                          : cli.value(view) == QLatin1String("profile") ? 2

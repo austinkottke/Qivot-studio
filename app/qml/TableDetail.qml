@@ -9,6 +9,8 @@ Item {
     property var database                 // for the Data tab
     property int tab: 0                    // 0 = Structure, 1 = Data, 2 = Profile, 3 = C++
     property int initialRow: -1            // --select-row: open this row in the inspector
+    signal changesRequested()
+    property bool editDemo: false             // --edit-demo
     signal navigate(string name)
     signal tabRequested(int tab)
 
@@ -110,6 +112,8 @@ Item {
             database: root.database
             tableName: root.info.name
             initialRow: root.initialRow
+            onChangesRequested: root.changesRequested()
+            editDemo: root.editDemo
         }
     }
 

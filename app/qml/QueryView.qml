@@ -168,9 +168,23 @@ Item {
         Item {
             SplitView.fillHeight: true
 
+            ExportButton {
+                id: queryExport
+                anchors { right: parent.right; top: parent.top }
+                visible: query.hasResult
+                target: query
+            }
+            Text {
+                anchors { right: queryExport.left; rightMargin: 10; verticalCenter: queryExport.verticalCenter }
+                visible: queryExport.visible && queryExport.message.length > 0
+                text: queryExport.message
+                color: queryExport.failed ? Theme.danger : Theme.positive
+                font.pixelSize: Theme.fontBody
+            }
             Text {
                 id: status
-                anchors { left: parent.left; right: parent.right; top: parent.top }
+                anchors { left: parent.left; right: queryExport.visible ? queryExport.left : parent.right
+                          rightMargin: queryExport.visible ? 200 : 0; top: parent.top }
                 height: 28
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight

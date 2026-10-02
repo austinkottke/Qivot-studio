@@ -1,4 +1,5 @@
 #include "querymodel.h"
+#include "datatransfer.h"
 #include "cellformat.h"
 
 #include <QElapsedTimer>
@@ -176,4 +177,15 @@ QHash<int, QByteArray> QueryModel::roleNames() const
         { NumberRole,      "isNumber" },
         { RawRole,         "raw" },
     };
+}
+
+QVariantMap QueryModel::exportTo(const QVariant &fileOrUrl, const QString &format)
+{
+    if (!m_session || !m_session->isOpen() || m_sql.trimmed().isEmpty() || m_columns.isEmpty())
+        return { { QStringLiteral("ok"), false }, { QStringLiteral("error"), tr("There's no result to export.") } };
+    QSqlQuery q(QSqlDatabase::database(m_session->connectionName(), false));
+    q.setForwardOnly(true);
+    if (!q.exec(m_sql))
+        return { { QStringLiteral("ok"), false }, { QStringLiteral("error"), q.lastError().text() } };
+    return DataTransfer::write(q, DataTransfer::localPath(fileOrUrl), format);
 }

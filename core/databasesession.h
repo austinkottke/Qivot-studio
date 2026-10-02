@@ -14,9 +14,12 @@
 /// One open database, as the UI sees it.
 /**
   An SQLite file, or a PostgreSQL / MySQL / MariaDB / SQL Server database on a
-  server. Either way it is opened for reading only — the Analyzer looks, it
-  never writes — and its structure is read once with QiSchema. QML gets plain
-  lists and maps, so the screens never touch SQL.
+  server. Either way it is opened for reading only, and its structure is read
+  with QiSchema. QML gets plain lists and maps, so the screens never touch SQL.
+
+  Changes (applying a design, editing rows, importing) need the user to allow
+  them first: allowChanges(true) opens a second, writable connection, and only
+  that one ever writes. The reading connection stays read-only throughout.
 
 \code
     Database {
@@ -47,6 +50,10 @@ class DatabaseSession : public QObject {
     Q_PROPERTY(QVariantList samples READ samples CONSTANT)
     /// Which sample is open ("" when it isn't one).
     Q_PROPERTY(QString sampleId READ sampleId NOTIFY sampleChanged)
+    /// Whether the user has allowed changes to this database (see allowChanges()).
+    Q_PROPERTY(bool changesAllowed READ changesAllowed NOTIFY changesAllowedChanged)
+    /// True while refresh() re-reads the structure (so screens can keep their place).
+    Q_PROPERTY(bool refreshing READ refreshing NOTIFY openChanged)
 
 public:
     explicit DatabaseSession(QObject *parent = nullptr);
@@ -72,6 +79,20 @@ public:
     QVariantMap availableTypes() const;
     QVariantList samples() const;
     QString sampleId() const { return m_sampleId; }
+    bool changesAllowed() const { return m_changesAllowed; }
+    bool refreshing() const { return m_refreshing; }
+
+    /// Allow changes to this database (`on`), or go back to reading only.
+    /// Allowing opens a separate, writable connection; false (with error())
+    /// if it can't be opened — a file that isn't writable, say.
+    Q_INVOKABLE bool allowChanges(bool on);
+
+    /// The writable connection, while changes are allowed; invalid otherwise.
+    QSqlDatabase writeDatabase() const;
+
+    /// Re-read the structure and row counts after a change. Emits
+    /// openChanged() with refreshing() true.
+    Q_INVOKABLE bool refresh();
 
     /// Every table, view and virtual table, sorted by name:
     /// `{ name, kind: "table"|"view"|"virtual", rows, columns }`.
@@ -129,6 +150,7 @@ public:
 
 signals:
     void sampleChanged();
+    void changesAllowedChanged();
     void openChanged();
     void errorChanged();
 
@@ -136,6 +158,8 @@ private:
     void setError(const QString &message);
     bool load(QSqlDatabase db);            // read the structure; becomes the open database
     void discard();                        // drop a connection that failed part-way
+    void closeWriter();
+    QString writeConnectionName() const { return m_connection + QStringLiteral("_write"); }
 
     QString                 m_connection;
     bool                    m_open = false;
@@ -145,6 +169,8 @@ private:
     QString                 m_displayName;
     QString                 m_path;
     QString                 m_sampleId;
+    bool                    m_changesAllowed = false;
+    bool                    m_refreshing = false;
     QString                 m_error;
     QVector<QiTableInfo>    m_tables;
     QHash<QString, qint64>  m_rows;

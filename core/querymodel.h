@@ -70,6 +70,10 @@ public:
     /// Every value of `row` in full, `{ column: value }`, for an inspector.
     Q_INVOKABLE QVariantMap rowAt(int row) const;
 
+    /// Run the last query again and write all its rows (not just the first
+    /// MaxRows) to a file: `format` "csv" or "json". `{ ok, rows, error, path }`.
+    Q_INVOKABLE QVariantMap exportTo(const QVariant &fileOrUrl, const QString &format);
+
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     int columnCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role) const override;

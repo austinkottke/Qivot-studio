@@ -63,6 +63,15 @@ Item {
         Rectangle { x: 1; y: 4.6; width: 12; height: 1.4; color: root.ink }
         Rectangle { x: 1; y: 8.6; width: 12; height: 1.4; color: root.ink }
     }
+    // compare: two sheets side by side, arrows between
+    Item {
+        visible: root.icon === "compare"
+        anchors.fill: parent
+        Rectangle { x: 0; y: 1; width: 5.5; height: 12; radius: 1.5; color: "transparent"; border.width: 1.4; border.color: root.ink }
+        Rectangle { x: 8.5; y: 1; width: 5.5; height: 12; radius: 1.5; color: "transparent"; border.width: 1.4; border.color: root.ink }
+        Rectangle { x: 5; y: 4.2; width: 4; height: 1.4; color: root.ink }
+        Rectangle { x: 5; y: 8.4; width: 4; height: 1.4; color: root.ink }
+    }
     // view: an eye
     Rectangle {
         visible: root.icon === "view"

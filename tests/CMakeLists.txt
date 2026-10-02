@@ -41,6 +41,19 @@ add_executable(tst_profile tst_profile.cpp)
 target_link_libraries(tst_profile PRIVATE Qt::Test studiocore)
 add_test(NAME profile COMMAND tst_profile)
 
+add_executable(tst_datatransfer tst_datatransfer.cpp)
+target_link_libraries(tst_datatransfer PRIVATE Qt::Test studiocore)
+add_test(NAME datatransfer COMMAND tst_datatransfer)
+
+add_executable(tst_compare tst_compare.cpp)
+target_link_libraries(tst_compare PRIVATE Qt::Test studiocore)
+add_test(NAME compare COMMAND tst_compare)
+
+add_executable(tst_diagramexport tst_diagramexport.cpp)
+target_link_libraries(tst_diagramexport PRIVATE Qt::Test studiocore)
+add_test(NAME diagramexport COMMAND tst_diagramexport)
+set_tests_properties(diagramexport PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_executable(tst_samples tst_samples.cpp)
 target_link_libraries(tst_samples PRIVATE Qt::Test studiocore)
 add_test(NAME samples COMMAND tst_samples)
@@ -72,6 +85,13 @@ set_tests_properties(app_smoke_samples_page PROPERTIES ENVIRONMENT "${STUDIO_SMO
 # Scrolling the diagram: a wheel zooms, then a trackpad pans.
 add_test(NAME app_smoke_wheel COMMAND qivot-studio --open-sample music --wheel 3 --wheel-pixels -120,-200 --smoke)
 set_tests_properties(app_smoke_wheel PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
+# The new ways to change things: editing rows (with unsaved edits), and Compare.
+add_test(NAME app_smoke_edit COMMAND qivot-studio --sample --table publisher --view data --allow-changes --edit-demo --smoke)
+set_tests_properties(app_smoke_edit PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
+add_test(NAME app_smoke_compare COMMAND qivot-studio --sample --view compare --smoke)
+set_tests_properties(app_smoke_compare PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
+add_test(NAME app_smoke_diagram_export COMMAND qivot-studio --open-sample company --export-diagram ${CMAKE_CURRENT_BINARY_DIR}/company.pdf --smoke --shot-delay 2000)
+set_tests_properties(app_smoke_diagram_export PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
 add_test(NAME app_smoke_welcome COMMAND qivot-studio --smoke)
 set_tests_properties(app_smoke_welcome PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
 

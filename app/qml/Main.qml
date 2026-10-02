@@ -16,6 +16,10 @@ ApplicationWindow {
     property var startupConnection: ({})        // from --connect
     property bool startupSample: false
     property string startupSampleId: ""
+    property bool startupAllowChanges: false  // --allow-changes
+    property bool startupEditDemo: false      // --edit-demo
+    property string startupCompare: ""        // --compare-with
+    property string startupExportDiagram: ""  // --export-diagram
     property string startupTable: ""
     property string startupView: ""          // "diagram" | "data" | "query" | "" (structure)
     property string startupQuery: ""         // from --query
@@ -40,6 +44,13 @@ ApplicationWindow {
     Database {
         id: db
         onOpenChanged: {
+            if (isOpen && win.startupAllowChanges) { win.startupAllowChanges = false; allowChanges(true) }
+            // A refresh after a change: stay where we are.
+            if (refreshing) {
+                if (win.selectedTable.length && table(win.selectedTable).name === undefined)
+                    win.selectedTable = win.firstTable()
+                return
+            }
             const wanted = win.startupTable
             win.startupTable = ""                    // only for the first file opened
             win.selectedTable = !isOpen ? ""
@@ -47,7 +58,7 @@ ApplicationWindow {
                               : win.firstTable()
             // A freshly opened database starts on the bird's-eye view, unless a table was asked for.
             win.view = win.startupView === "query" || win.startupView === "export" || win.startupView === "design"
-                       || win.startupView === "samples"
+                       || win.startupView === "samples" || win.startupView === "compare"
                        || win.startupProject.length
                        ? (win.startupProject.length ? "export" : win.startupView)
                      : wanted.length && win.startupView !== "diagram" ? "table" : "diagram"
@@ -70,6 +81,20 @@ ApplicationWindow {
     OpenDialog { id: openDialog; onPicked: function (file) { db.open(file) } }
 
     ConnectDialog { id: connectDialog; database: db }
+
+    // Changes need the user's say-so: requestChanges(then) asks once, then runs `then`.
+    AllowChangesDialog {
+        id: allowDialog
+        database: db
+        property var then: null
+        onAllowed: { if (then) then(); then = null }
+        onClosed: if (!db.changesAllowed) then = null
+    }
+    function requestChanges(then) {
+        if (db.changesAllowed) { if (then) then(); return }
+        allowDialog.then = then || null
+        allowDialog.open()
+    }
     function showConnectDialog() { connectDialog.open() }
 
     // The Samples page before anything is open: from the welcome screen's Samples button.
@@ -119,6 +144,8 @@ ApplicationWindow {
             exportSelected: win.view === "export"
             designSelected: win.view === "design"
             samplesSelected: win.view === "samples"
+            compareSelected: win.view === "compare"
+            onCompareRequested: win.view = "compare"
             onSamplesRequested: win.view = "samples"
             onDesignRequested: win.view = "design"
             onExportRequested: win.view = "export"
@@ -126,6 +153,7 @@ ApplicationWindow {
             onSelect: (name) => { win.selectedTable = name; win.view = "table" }
             onDiagramRequested: win.view = "diagram"
             // Closing a sample goes back to the samples, to pick another.
+            onAllowChangesRequested: win.requestChanges(null)
             onCloseRequested: {
                 const wasSample = db.sampleId.length > 0
                 db.close()
@@ -144,6 +172,9 @@ ApplicationWindow {
             database: db
             initialFind: win.startupFind
             hoverEnabled: !win.screenshotMode
+            exportOnLoad: win.startupExportDiagram
+            // Remember where cards are dragged, per database.
+            layoutKey: db.isOpen ? db.dialect + ":" + (db.filePath.length ? db.filePath : db.location + "/" + db.displayName) : ""
             onOpenTable: (name) => { win.selectedTable = name; win.detailTab = 0; win.view = "table" }
         }
 
@@ -183,6 +214,7 @@ ApplicationWindow {
                 initialTable: win.startupView === "design" ? win.startupDesignTable : ""
                 initialTab: win.startupDesignTab.length ? win.startupDesignTab : "table"
                 onOpenFile: function (path) { db.open(path) }
+                onChangesRequested: function (then) { win.requestChanges(then) }
             }
         }
 
@@ -198,6 +230,17 @@ ApplicationWindow {
             }
         }
 
+        Loader {
+            anchors { left: sidebar.right; leftMargin: 1; right: parent.right; top: parent.top; bottom: parent.bottom }
+            active: win.view === "compare"
+            visible: active
+            sourceComponent: CompareView {
+                database: db
+                initialOther: win.startupCompare
+                onChangesRequested: function (then) { win.requestChanges(then) }
+            }
+        }
+
         TableDetail {
             anchors { left: sidebar.right; leftMargin: 1; right: parent.right
                       top: parent.top; bottom: parent.bottom }
@@ -209,6 +252,8 @@ ApplicationWindow {
             tab: win.detailTab
             onTabRequested: (t) => win.detailTab = t
             onNavigate: (name) => win.selectedTable = name
+            onChangesRequested: win.requestChanges(null)
+            editDemo: win.startupEditDemo
         }
     }
 }

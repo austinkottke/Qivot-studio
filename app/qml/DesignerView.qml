@@ -16,6 +16,8 @@ Item {
     property bool demo: false                 // --design-demo: start with a few example edits
     property string demoMenu: ""              // --design-menu table[.column]: open that menu (screenshots)
     signal openFile(string path)              // "Open the copy"
+    signal changesRequested(var then)         // ask to allow changes, then run `then`
+    property string appliedNote: ""           // what the last apply to the database did
 
     Design { id: design; autosave: !root.demo; session: root.database }
 
@@ -602,11 +604,18 @@ Item {
                     ActionButton {
                         visible: design.dialect === "sqlite"
                         text: "Apply to a copy"
+                        enabled: design.errorCount === 0
+                        opacity: enabled ? 1 : 0.45
+                        implicitHeight: 32
+                        onClicked: { root.appliedNote = ""; root.appliedTo = design.applyToCopy() }
+                    }
+                    ActionButton {
+                        text: "Apply to database…"
                         primary: true
                         enabled: design.errorCount === 0
                         opacity: enabled ? 1 : 0.45
                         implicitHeight: 32
-                        onClicked: root.appliedTo = design.applyToCopy()
+                        onClicked: applyDialog.open()
                     }
                 }
                 Text {
@@ -614,7 +623,8 @@ Item {
                     anchors { left: parent.left; right: parent.right; top: sqlActions.bottom; topMargin: 10 }
                     visible: text.length > 0
                     wrapMode: Text.Wrap
-                    text: design.error.length ? design.error
+                    text: design.error.length ? design.error + (root.failedStatement.length ? "\n\n" + root.failedStatement : "")
+                          : root.appliedNote.length ? root.appliedNote
                           : root.appliedTo.length ? "Migrated a copy: " + root.appliedTo.slice(root.appliedTo.lastIndexOf("/") + 1)
                                                    + ". The original is untouched." : ""
                     color: design.error.length ? Theme.danger : Theme.positive
@@ -623,7 +633,7 @@ Item {
                 Text {
                     id: openCopy
                     anchors { left: parent.left; top: applied.bottom; topMargin: 4 }
-                    visible: root.appliedTo.length > 0 && !design.error.length
+                    visible: root.appliedTo.length > 0 && !design.error.length && !root.appliedNote.length
                     text: "Open the copy"
                     color: Theme.accent
                     font.pixelSize: Theme.fontBody
@@ -691,5 +701,85 @@ Item {
             font.pixelSize: Theme.fontSmall + 1
         }
         MouseArea { anchors.fill: parent; enabled: line.clickable; cursorShape: Qt.PointingHandCursor; onClicked: line.clicked() }
+    }
+
+    // ---- Apply to the database itself ----
+    property string failedStatement: ""
+    function applyNow() {
+        const count = design.changes.length
+        const r = design.applyToDatabase()
+        root.failedStatement = r.ok ? "" : (r.failedStatement || "")
+        root.appliedTo = ""
+        root.appliedNote = r.ok ? "Applied " + count + (count === 1 ? " change" : " changes") + " to " + root.database.displayName + "."
+                                  + (r.backup ? " The file as it was is saved as " + r.backup.slice(r.backup.lastIndexOf("/") + 1) + "." : "")
+                                : ""
+    }
+    Popup {
+        id: applyDialog
+        modal: true
+        focus: true
+        anchors.centerIn: Overlay.overlay
+        width: 500
+        padding: 24
+        Overlay.modal: Rectangle { color: Theme.dark ? "#99000000" : "#59000000" }
+        background: Rectangle { radius: 14; color: Theme.window; border.width: 1; border.color: Theme.separator }
+        contentItem: Column {
+            width: applyDialog.availableWidth
+            spacing: 12
+            Text {
+                width: applyDialog.availableWidth; wrapMode: Text.Wrap
+                text: "Apply " + design.changes.length + (design.changes.length === 1 ? " change" : " changes")
+                      + " to " + (root.database ? root.database.displayName : "") + "?"
+                color: Theme.text
+                font.pixelSize: 18; font.weight: Font.Bold
+            }
+            Rectangle {
+                width: applyDialog.availableWidth
+                height: Math.min(180, applyList.implicitHeight + 16)
+                radius: Theme.radiusSmall
+                color: Theme.surface
+                border.width: 1; border.color: Theme.separator
+                clip: true
+                Flickable {
+                    anchors { fill: parent; margins: 8 }
+                    contentHeight: applyList.implicitHeight
+                    boundsBehavior: Flickable.StopAtBounds
+                    Column {
+                        id: applyList
+                        width: applyDialog.availableWidth
+                        Repeater {
+                            model: design.changes
+                            Text { width: applyList.width; elide: Text.ElideRight; text: "•  " + modelData
+                                   color: Theme.text; font.pixelSize: Theme.fontBody }
+                        }
+                    }
+                }
+            }
+            Text {
+                width: applyDialog.availableWidth; wrapMode: Text.Wrap; lineHeight: 1.2
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontBody
+                text: (design.dialect === "sqlite"
+                       ? "The file is copied first, as a backup beside it. "
+                       : "Make sure you have a backup of the database. ")
+                      + (design.dialect === "mysql"
+                         ? "MySQL commits each change to the structure as it goes, so if one fails, the ones before it stay."
+                         : "It all runs in one transaction: if anything fails, nothing changes.")
+                      + (root.database && !root.database.changesAllowed ? "\n\nThis also allows changes to the database." : "")
+            }
+            Row {
+                anchors.right: parent.right
+                spacing: 10
+                ActionButton { text: "Cancel"; onClicked: applyDialog.close() }
+                ActionButton {
+                    text: root.database && root.database.changesAllowed ? "Apply" : "Allow changes and apply"
+                    primary: true
+                    onClicked: {
+                        applyDialog.close()
+                        root.changesRequested(root.applyNow)
+                    }
+                }
+            }
+        }
     }
 }

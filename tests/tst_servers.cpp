@@ -10,6 +10,7 @@
 #include "tableprofile.h"
 #include "sampledatabase.h"
 #include "sampleschema.h"
+#include "datatransfer.h"
 
 /// Studio against real servers holding the public sample databases
 /// (Pagila on PostgreSQL, Sakila and Employees on MySQL, Chinook on SQL Server).
@@ -304,6 +305,78 @@ private:
         }
     }
 
+    // Changing a server database through Studio: allow changes, edit rows,
+    // import a CSV, apply a design — on a fresh copy of the bookshop sample.
+    void changesOn(const QString &type, const QString &env, const QString &adminDb,
+                   const QString &defUser, const QString &defPass)
+    {
+        const QString name = "studio_changes";
+        {
+            QSqlDatabase admin = writable(type, env, adminDb, defUser, defPass, "admin");
+            QVERIFY2(admin.isOpen(), qPrintable(admin.lastError().text()));
+            QSqlQuery q(admin);
+            if (type == "sqlserver")
+                q.exec(QString("IF DB_ID('%1') IS NOT NULL ALTER DATABASE %1 SET SINGLE_USER WITH ROLLBACK IMMEDIATE").arg(name));
+            q.exec(QString("DROP DATABASE IF EXISTS %1").arg(name));
+            QVERIFY2(q.exec(QString("CREATE DATABASE %1").arg(name)), qPrintable(q.lastError().text()));
+        }
+        QSqlDatabase::removeDatabase("admin");
+        {
+            QSqlDatabase w = writable(type, env, name, defUser, defPass, "load");
+            QString why;
+            QVERIFY2(SampleDatabase::load("bookshop", w, type, &why), qPrintable(why));
+        }
+        QSqlDatabase::removeDatabase("load");
+
+        DatabaseSession db;
+        QVERIFY2(db.connectTo(settings(type, env, name, defUser, defPass)), qPrintable(db.error()));
+        QVERIFY2(db.allowChanges(true), qPrintable(db.error()));
+
+        // Rows: an edit, a delete, a new one; then a failure that saves nothing.
+        RowsModel m;
+        m.setSession(&db);
+        m.setTable("publisher");
+        QVERIFY(m.editable());
+        m.sortBy(0);                                            // by id: row 0 is publisher 1
+        QVERIFY(m.setCell(0, columnOf(m, "name"), "Northwind Press"));
+        m.toggleDelete(11);                                     // publisher 12
+        const int added = m.addRow();
+        QVERIFY(m.setCell(added, columnOf(m, "name"), "Quill & Ink"));
+        QVERIFY2(m.save(), qPrintable(m.error()));
+        QCOMPARE(scalar(db, "SELECT COUNT(*) FROM publisher"), qint64(12));
+        QCOMPARE(scalar(db, "SELECT COUNT(*) FROM publisher WHERE name = 'Northwind Press'"), qint64(1));
+        QVERIFY(m.setCell(1, columnOf(m, "name"), "Northwind Press"));   // name is UNIQUE
+        QVERIFY(!m.save());
+        m.discardChanges();
+
+        // A CSV import, all in one transaction.
+        QTemporaryDir dir;
+        QFile csv(dir.filePath("p.csv"));
+        QVERIFY(csv.open(QIODevice::WriteOnly));
+        csv.write("name,country\nBramble House,Ireland\nOakleaf,\n");
+        csv.close();
+        CsvImport imp;
+        imp.setSession(&db);
+        imp.setTable("publisher");
+        QVERIFY(imp.load(csv.fileName()));
+        QVERIFY2(imp.run(), qPrintable(imp.error()));
+        QCOMPARE(scalar(db, "SELECT COUNT(*) FROM publisher"), qint64(14));
+
+        // A design applied to the server itself.
+        SchemaDesign d;
+        d.setAutosaveEnabled(false);
+        d.setSession(&db);
+        d.addColumn("book", "subtitle", type == "postgres" ? "text" : type == "mysql" ? "VARCHAR(200)" : "NVARCHAR(200)");
+        const QString tag = d.addTable("tag");
+        d.addColumn(tag, "label", type == "postgres" ? "text" : "VARCHAR(80)");
+        const QVariantMap r = d.applyToDatabase();
+        QVERIFY2(r.value("ok").toBool(), qPrintable(r.value("error").toString() + "\n" + r.value("failedStatement").toString()));
+        QVERIFY2(d.changes().isEmpty(), qPrintable(d.changes().join(" | ")));
+        QVERIFY(db.table("tag").value("name") == "tag");
+        QCOMPARE(scalar(db, "SELECT COUNT(*) FROM book"), qint64(1200));
+        db.allowChanges(false);
+    }
+
 private slots:
     void postgresPagila()
     {
@@ -463,6 +536,21 @@ private slots:
         QCOMPARE(db.error(), QString("Enter the name of the database to open."));
         QVERIFY(!db.connectTo({ { "type", "oracle" } }));
         QVERIFY(db.error().contains("Unknown database type"));
+    }
+    void changesOnPostgres()
+    {
+        if (qEnvironmentVariableIsEmpty("STUDIO_TEST_PG")) QSKIP("STUDIO_TEST_PG not set");
+        changesOn("postgres", "STUDIO_TEST_PG", "postgres", "qivot", "qivot");
+    }
+    void changesOnMysql()
+    {
+        if (qEnvironmentVariableIsEmpty("STUDIO_TEST_MYSQL")) QSKIP("STUDIO_TEST_MYSQL not set");
+        changesOn("mysql", "STUDIO_TEST_MYSQL", "mysql", "root", "qivot");
+    }
+    void changesOnSqlServer()
+    {
+        if (qEnvironmentVariableIsEmpty("STUDIO_TEST_MSSQL")) QSKIP("STUDIO_TEST_MSSQL not set");
+        changesOn("sqlserver", "STUDIO_TEST_MSSQL", "master", "sa", "Qivot_Test1");
     }
     void samplesOnPostgres()
     {

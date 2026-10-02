@@ -12,6 +12,8 @@ Rectangle {
     property bool exportSelected: false
     property bool designSelected: false
     property bool samplesSelected: false
+    property bool compareSelected: false
+    signal compareRequested()
     signal select(string name)
     signal diagramRequested()
     signal queryRequested()
@@ -19,6 +21,7 @@ Rectangle {
     signal designRequested()
     signal closeRequested()
     signal samplesRequested()
+    signal allowChangesRequested()
     readonly property bool isSample: database && database.sampleId !== undefined && database.sampleId.length > 0
 
     color: Theme.sidebar
@@ -38,7 +41,7 @@ Rectangle {
     Item {
         id: header
         anchors { left: parent.left; right: parent.right; top: parent.top }
-        height: root.isSample ? 82 : 64
+        height: (root.isSample ? 82 : 64) + 24
 
         Column {
             anchors { left: parent.left; leftMargin: 16; right: closeButton.left; rightMargin: 8
@@ -56,12 +59,34 @@ Rectangle {
                 elide: Text.ElideRight
                 text: !root.database || !root.database.isOpen ? ""
                       : root.database.isServer
-                        ? root.database.dialectName + " · " + root.database.location + " · "
-                          + (root.database.readOnly ? "read-only" : "browse only")
+                        ? root.database.dialectName + " · " + root.database.location
                         : root.database.tables.length + " objects · "
-                          + (root.database.fileSize / 1048576).toFixed(1) + " MB · read-only"
+                          + (root.database.fileSize / 1048576).toFixed(1) + " MB"
                 color: Theme.textSecondary
                 font.pixelSize: Theme.fontSmall
+            }
+            // Read-only, or changes allowed: one click to lock again, a confirmation to unlock.
+            Rectangle {
+                readonly property bool open: root.database && root.database.changesAllowed
+                width: lockText.implicitWidth + 18; height: 20; radius: 10
+                color: open ? Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.16)
+                            : lockMouse.containsMouse ? Theme.hover : "transparent"
+                border.width: 1
+                border.color: open ? Theme.warning : Theme.separator
+                Text {
+                    id: lockText
+                    anchors.centerIn: parent
+                    text: parent.open ? "✎ Changes allowed · lock" : (lockMouse.containsMouse ? "Read-only · allow changes…" : "Read-only")
+                    color: parent.open ? Theme.warning : Theme.textSecondary
+                    font.pixelSize: Theme.fontSmall; font.weight: Font.DemiBold
+                }
+                MouseArea {
+                    id: lockMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: parent.open ? root.database.allowChanges(false) : root.allowChangesRequested()
+                }
             }
             // A sample: the way back to all of them (closing this one).
             Text {
@@ -144,6 +169,14 @@ Rectangle {
                 icon: "design"
                 selected: root.designSelected
                 onClicked: root.designRequested()
+            }
+            NavItem {
+                width: content.width
+                label: "Compare"
+                detail: ""
+                icon: "compare"
+                selected: root.compareSelected
+                onClicked: root.compareRequested()
             }
             NavItem {
                 width: content.width

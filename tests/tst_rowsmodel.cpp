@@ -197,6 +197,82 @@ private slots:
         QCOMPARE(m.rowCount(), 150);
     }
 
+    // Editing, once changes are allowed: edits, deletes and new rows show at
+    // once, survive paging and sorting, save in one transaction or not at all.
+    void editsAndSaves()
+    {
+        const QString file = m_dir.filePath("edit.db");
+        QFile::remove(file);
+        QVERIFY(QFile::copy(m_sample, file));
+        DatabaseSession db;
+        QVERIFY(db.open(file));
+        RowsModel m;
+        m.setSession(&db);
+        m.setTable("publisher");
+        QVERIFY(!m.editable());
+        QVERIFY(m.notEditableReason().contains("allow changes"));
+        QVERIFY(!m.setCell(0, 1, "x"));
+
+        QVERIFY(db.allowChanges(true));
+        QVERIFY(m.editable());
+        const int name = columnOf(m, "name"), country = columnOf(m, "country");
+        const QString was = cell(m, 0, name);
+        QVERIFY(m.setCell(0, name, "Northwind Press"));
+        QCOMPARE(cell(m, 0, name), QString("Northwind Press"));
+        QVERIFY(m.data(m.index(0, name), RowsModel::EditedRole).toBool());
+        QVERIFY(m.setCell(1, country, QVariant()));                       // NULL
+        QVERIFY(m.data(m.index(1, country), RowsModel::NullRole).toBool());
+        m.toggleDelete(11);
+        QVERIFY(m.data(m.index(11, 0), RowsModel::DeletedRole).toBool());
+        const int added = m.addRow();
+        QCOMPARE(added, 12);
+        QCOMPARE(m.rowCount(), 13);
+        QCOMPARE(cell(m, added, name), QString("default"));
+        QVERIFY(m.setCell(added, name, "Quill & Ink"));
+        QCOMPARE(m.pendingCount(), 4);
+
+        // Edits are by key: they survive a re-sort.
+        m.sortBy(name);
+        m.clearSort();
+        QCOMPARE(cell(m, 0, name), QString("Northwind Press"));
+        // Setting a value back drops the change.
+        QVERIFY(m.setCell(0, name, was));
+        QCOMPARE(m.pendingCount(), 3);
+        QVERIFY(m.setCell(0, name, "Northwind Press"));
+
+        const QString sql = m.pendingSql().join("\n");
+        QVERIFY2(sql.contains("UPDATE \"publisher\" SET \"name\" = 'Northwind Press' WHERE \"id\" = 1;"), qPrintable(sql));
+        QVERIFY2(sql.contains("UPDATE \"publisher\" SET \"country\" = NULL WHERE \"id\" = 2;"), qPrintable(sql));
+        QVERIFY2(sql.contains("DELETE FROM \"publisher\" WHERE \"id\" = 12;"), qPrintable(sql));
+        QVERIFY2(sql.contains("INSERT INTO \"publisher\" (\"name\") VALUES ('Quill & Ink');"), qPrintable(sql));
+
+        QVERIFY2(m.save(), qPrintable(m.error()));
+        QCOMPARE(m.pendingCount(), 0);
+        QCOMPARE(m.rowCount(), 12);                                        // one gone, one new
+        QSqlQuery q(QSqlDatabase::database(db.connectionName()));
+        QVERIFY(q.exec("SELECT name FROM publisher WHERE id = 1") && q.next());
+        QCOMPARE(q.value(0).toString(), QString("Northwind Press"));
+        QVERIFY(q.exec("SELECT COUNT(*) FROM publisher WHERE name = 'Quill & Ink'") && q.next());
+        QCOMPARE(q.value(0).toInt(), 1);
+        QCOMPARE(db.table("publisher").value("rows").toLongLong(), qint64(12));   // the sidebar's count too
+
+        // A failure saves nothing: the second change breaks a UNIQUE name.
+        QVERIFY(m.setCell(2, country, "Iceland"));
+        QVERIFY(m.setCell(3, name, "Northwind Press"));
+        QVERIFY(!m.save());
+        QVERIFY2(m.error().contains("Nothing was saved"), qPrintable(m.error()));
+        QVERIFY(q.exec("SELECT COUNT(*) FROM publisher WHERE country = 'Iceland'") && q.next());
+        QCOMPARE(q.value(0).toInt(), 0);
+        QCOMPARE(m.pendingCount(), 2);                                     // still there to fix
+        m.discardChanges();
+        QCOMPARE(m.pendingCount(), 0);
+
+        // Views can't be edited.
+        m.setTable("book_sales");
+        QVERIFY(!m.editable());
+        QVERIFY(m.notEditableReason().contains("view"));
+    }
+
     void emptiesWhenDatabaseCloses()
     {
         RowsModel m;

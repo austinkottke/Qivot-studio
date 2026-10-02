@@ -300,9 +300,98 @@ bool DatabaseSession::openSample(const QString &sampleId)
     return true;
 }
 
+bool DatabaseSession::allowChanges(bool on)
+{
+    if (on == m_changesAllowed)
+        return true;
+    if (!on) {
+        closeWriter();
+        return true;
+    }
+    if (!m_open)
+        return false;
+    const QString type = m_settings.value(QStringLiteral("type")).toString();
+    QSqlDatabase db;
+    if (type == QLatin1String("sqlite")) {
+        if (!QFileInfo(m_path).isWritable()) {
+            setError(tr("%1 can't be changed: the file isn't writable.").arg(m_displayName));
+            return false;
+        }
+        db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), writeConnectionName());
+        db.setDatabaseName(m_path);
+        db.setConnectOptions(QStringLiteral("QSQLITE_BUSY_TIMEOUT=5000"));   // wait out a read in progress
+    } else {
+        // The same server and login as the reading connection, without the read-only parts.
+        const QString driver = m_settings.value(QStringLiteral("driver")).toString();
+        db = QSqlDatabase::addDatabase(driver, writeConnectionName());
+        const QString host = m_settings.value(QStringLiteral("host")).toString();
+        const int port = m_settings.value(QStringLiteral("port")).toInt();
+        const QString database = m_settings.value(QStringLiteral("database")).toString();
+        const QString user = m_settings.value(QStringLiteral("user")).toString();
+        if (driver == QLatin1String("QODBC")) {
+            auto braced = [](QString v) { return QLatin1Char('{') + v.replace(QLatin1Char('}'), QLatin1String("}}")) + QLatin1Char('}'); };
+            db.setDatabaseName(QStringLiteral("Driver={%1};Server=%2,%3;Database=%4;Uid=%5;Pwd=%6;TrustServerCertificate=yes;")
+                                   .arg(m_settings.value(QStringLiteral("odbcDriver")).toString(), host).arg(port)
+                                   .arg(braced(database), braced(user), braced(m_password)));
+        } else {
+            db.setHostName(host);
+            db.setPort(port);
+            db.setDatabaseName(database);
+            db.setUserName(user);
+            db.setPassword(m_password);
+        }
+    }
+    if (!db.open()) {
+        setError(tr("Couldn't open %1 for changes: %2").arg(m_displayName, db.lastError().text()));
+        db = QSqlDatabase();
+        QSqlDatabase::removeDatabase(writeConnectionName());
+        return false;
+    }
+    if (type == QLatin1String("sqlite"))
+        QSqlQuery(db).exec(QStringLiteral("PRAGMA foreign_keys = ON"));    // edits respect the references
+    m_changesAllowed = true;
+    setError(QString());
+    emit changesAllowedChanged();
+    return true;
+}
+
+QSqlDatabase DatabaseSession::writeDatabase() const
+{
+    return m_changesAllowed ? QSqlDatabase::database(writeConnectionName()) : QSqlDatabase();
+}
+
+void DatabaseSession::closeWriter()
+{
+    if (QSqlDatabase::contains(writeConnectionName())) {
+        {
+            QSqlDatabase db = QSqlDatabase::database(writeConnectionName(), false);
+            db.close();
+        }
+        QSqlDatabase::removeDatabase(writeConnectionName());
+    }
+    if (m_changesAllowed) {
+        m_changesAllowed = false;
+        emit changesAllowedChanged();
+    }
+}
+
+bool DatabaseSession::refresh()
+{
+    if (!m_open)
+        return false;
+    m_tables.clear();
+    m_rows.clear();
+    m_sqlNames.clear();
+    m_refreshing = true;
+    const bool ok = load(QSqlDatabase::database(m_connection));
+    m_refreshing = false;
+    return ok;
+}
+
 void DatabaseSession::close()
 {
     const bool wasOpen = m_open;
+    closeWriter();
     discard();
     m_open = false;
     m_readOnly = false;

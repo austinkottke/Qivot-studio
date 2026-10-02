@@ -29,6 +29,12 @@
     TableView { model: rows }
     // header click:  rows.sortBy(column)   (ascending, then descending)
 \endcode
+
+  Editing, once the user allows changes to the database: setCell(),
+  toggleDelete() and addRow() collect changes (keyed by each row's primary
+  key, so they survive paging, sorting and filtering, and show at once), and
+  save() runs them all in one transaction on the writable connection —
+  pendingSql() is what it would run. New rows sit after the table's own.
  */
 class RowsModel : public QAbstractTableModel {
     Q_OBJECT
@@ -43,9 +49,18 @@ class RowsModel : public QAbstractTableModel {
     Q_PROPERTY(qint64 matchingRows READ matchingRows NOTIFY countsChanged)
     Q_PROPERTY(QVariantList columns READ columns NOTIFY columnsChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
+    /// Whether rows can be edited now: changes are allowed, it's a table (not
+    /// a view) and it has a primary key to find each row by.
+    Q_PROPERTY(bool editable READ editable NOTIFY editableChanged)
+    /// Why not, when not editable ("" when it is).
+    Q_PROPERTY(QString notEditableReason READ notEditableReason NOTIFY editableChanged)
+    /// Rows changed, deleted or added, not yet saved.
+    Q_PROPERTY(int pendingCount READ pendingCount NOTIFY pendingChanged)
+    /// The statements save() would run, with the values written in.
+    Q_PROPERTY(QStringList pendingSql READ pendingSql NOTIFY pendingChanged)
 
 public:
-    enum Role { NullRole = Qt::UserRole + 1, NumberRole, RawRole };
+    enum Role { NullRole = Qt::UserRole + 1, NumberRole, RawRole, EditedRole, DeletedRole, InsertedRole };
 
     explicit RowsModel(QObject *parent = nullptr);
 
@@ -70,8 +85,31 @@ public:
     /// Back to the table's natural order.
     Q_INVOKABLE void clearSort();
 
+    /// Every row that matches the filter, in the current order, to a file:
+    /// `format` "csv" or "json". `{ ok, rows, error, path }` (see DataTransfer::write).
+    Q_INVOKABLE QVariantMap exportTo(const QVariant &fileOrUrl, const QString &format);
+
     /// Every value in `row` as `{ column: value }` (nulls stay null) — for an inspector.
     Q_INVOKABLE QVariantMap rowAt(int row);
+
+    bool editable() const;
+    QString notEditableReason() const;
+    int pendingCount() const { return m_changes.size() + m_inserts.size(); }
+    QStringList pendingSql() const;
+
+    /// Set a cell (`value`: text, or null for NULL). Returns false if it can't be edited.
+    Q_INVOKABLE bool setCell(int row, int column, const QVariant &value);
+    /// Whether `row` is marked to be deleted.
+    Q_INVOKABLE bool rowDeleted(int row) const { return data(index(row, 0), DeletedRole).toBool(); }
+    /// Mark a row to be deleted, or not any more; a new row is just dropped.
+    Q_INVOKABLE void toggleDelete(int row);
+    /// A new, empty row at the end (its columns get their defaults); returns its row.
+    Q_INVOKABLE int addRow();
+    /// Forget every unsaved change.
+    Q_INVOKABLE void discardChanges();
+    /// Save every change in one transaction; on failure nothing is saved and
+    /// error() says which change failed.
+    Q_INVOKABLE bool save();
 
     /// How many pages are held right now (tests check the cache stays bounded).
     int cachedPages() const { return m_pages.size(); }
@@ -94,6 +132,8 @@ signals:
     void countsChanged();
     void columnsChanged();
     void errorChanged();
+    void editableChanged();
+    void pendingChanged();
 
 private:
     struct Column { QString name; QString type; bool primaryKey; };
@@ -107,7 +147,17 @@ private:
     void setError(const QString &error);
     QString quoted(const QString &identifier) const;
 
+    struct Change { QVariantList key; QHash<int, QVariant> values; bool deleted = false; };
+    QVariantList keyOf(const QVariantList &row) const;
+    static QString keyString(const QVariantList &key);
+    QString literal(const QVariant &v, int column) const;
+    QString keyCondition(const QVariantList &key, QVariantList *binds, bool literals) const;
+    void dropPending();
+
     QPointer<DatabaseSession> m_session;
+    bool           m_isTable = false;
+    QHash<QString, Change> m_changes;           // existing rows, by their key
+    QVector<QHash<int, QVariant>> m_inserts;    // new rows: column -> value
     QString        m_table;
     QString        m_filter;
     int            m_sortColumn = -1;

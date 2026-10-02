@@ -16,10 +16,33 @@ Item {
     property string emptyText: "No rows."
     signal sortRequested(int column)
 
+    // Editing (a table's rows, once changes are allowed): the grid asks, the model keeps track.
+    property bool editable: false
+    signal cellEdited(int row, int column, var value)     // value: text, or null for NULL
+    signal deleteToggled(int row)
+    property int editRow: -1
+    property int editColumn: -1
+    function startEdit(row, column) { if (editable) { editRow = row; editColumn = column } }
+    function commitEdit(text) {
+        if (editRow >= 0) cellEdited(editRow, editColumn, text)
+        editRow = -1; editColumn = -1
+    }
+    // The cell the context menu is for.
+    property int menuRow: -1
+    property int menuColumn: -1
+
     property int selectedRow: -1
-    readonly property var selectedValues: selectedRow >= 0 && valuesForRow ? valuesForRow(selectedRow) : ({})
+    // Re-read after each edit (pendingCount moves), so the inspector shows unsaved values.
+    readonly property var selectedValues: (model && model.pendingCount, selectedRow >= 0 && valuesForRow
+                                           ? valuesForRow(selectedRow) : ({}))
 
     function forceLayout() { grid.forceLayout() }
+    // Scroll so `row` is in view (rows are 30 high).
+    function positionAt(row) {
+        Qt.callLater(function () {
+            grid.contentY = Math.max(0, Math.min(Math.max(0, grid.contentHeight - grid.height), row * 30 - grid.height / 2))
+        })
+    }
     function fmt(n) { return Number(n).toLocaleString(Qt.locale(), "f", 0) }
 
     // Numbers line up on the right, so a column's alignment follows its type —
@@ -142,24 +165,63 @@ Item {
             ScrollBar.horizontal: ScrollBar { }
 
             delegate: Rectangle {
+                id: cellBox
                 implicitWidth: 120
                 implicitHeight: 30
-                color: row === root.selectedRow ? Theme.accentSoft
+                // Unsaved changes show where they are: edited cells, deleted and new rows.
+                readonly property bool cellEdited: model.edited === true
+                readonly property bool rowDeleted: model.deleted === true
+                readonly property bool rowInserted: model.inserted === true
+                readonly property bool editing: root.editRow === row && root.editColumn === column
+                color: rowDeleted ? Qt.rgba(Theme.danger.r, Theme.danger.g, Theme.danger.b, 0.12)
+                     : cellEdited ? Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.16)
+                     : rowInserted ? Qt.rgba(Theme.positive.r, Theme.positive.g, Theme.positive.b, 0.10)
+                     : row === root.selectedRow ? Theme.accentSoft
                      : row % 2 ? Theme.surfaceRaised : Theme.surface
+                Rectangle {          // a mark at the edge of an edited cell
+                    visible: cellBox.cellEdited && !cellBox.rowDeleted
+                    width: 3; height: parent.height
+                    color: Theme.warning
+                }
                 Text {
+                    visible: !cellBox.editing
                     anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
                     verticalAlignment: Text.AlignVCenter
                     horizontalAlignment: isNumber || root.isNumericColumn(column) ? Text.AlignRight : Text.AlignLeft
                     text: display
-                    color: isNull ? Theme.textTertiary : Theme.text
-                    font.italic: isNull
+                    color: isNull || (cellBox.rowInserted && !cellBox.cellEdited) ? Theme.textTertiary : Theme.text
+                    font.italic: isNull || (cellBox.rowInserted && !cellBox.cellEdited)
+                    font.strikeout: cellBox.rowDeleted
                     font.pixelSize: Theme.fontBody
                     font.family: isNumber ? Theme.monoFont : Qt.application.font.family
                     elide: Text.ElideRight
                 }
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: root.selectedRow = (root.selectedRow === row ? -1 : row)
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: function (mouse) {
+                        if (mouse.button === Qt.RightButton) {
+                            root.menuRow = row; root.menuColumn = column
+                            root.selectedRow = row
+                            cellMenu.popup()
+                            return
+                        }
+                        root.selectedRow = (root.selectedRow === row ? -1 : row)
+                    }
+                    onDoubleClicked: root.startEdit(row, column)
+                }
+                // The editor, in place of the text.
+                Loader {
+                    anchors.fill: parent
+                    active: cellBox.editing
+                    sourceComponent: Field {
+                        text: isNull ? "" : (model.raw === undefined || model.raw === null ? "" : String(model.raw))
+                        implicitHeight: 30
+                        Component.onCompleted: { forceActiveFocus(); selectAll() }
+                        onAccepted: root.commitEdit(text)
+                        Keys.onEscapePressed: { root.editRow = -1; root.editColumn = -1 }
+                        onActiveFocusChanged: if (!activeFocus && cellBox.editing) root.commitEdit(text)
+                    }
                 }
             }
         }
@@ -193,6 +255,16 @@ Item {
                 text: "Row " + root.fmt(root.selectedRow + 1)
                 color: Theme.text
                 font.pixelSize: Theme.fontHeading; font.weight: Font.DemiBold
+            }
+            Text {
+                readonly property bool deleted: root.selectedRow >= 0 && root.model && root.model.rowDeleted !== undefined
+                                                && (root.model.pendingCount, root.model.rowDeleted(root.selectedRow))
+                visible: root.editable
+                anchors { right: parent.right; rightMargin: 44; verticalCenter: parent.verticalCenter }
+                text: deleted ? "Restore row" : "Delete row"
+                color: deleted ? Theme.accent : Theme.danger
+                font.pixelSize: Theme.fontBody
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.deleteToggled(root.selectedRow) }
             }
             Rectangle {
                 anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
@@ -229,7 +301,31 @@ Item {
                             color: Theme.textTertiary
                             font.pixelSize: Theme.fontSmall; font.weight: Font.Bold; font.letterSpacing: 0.4
                         }
+                        // Editable: a field, and a way to say NULL.
+                        Row {
+                            visible: root.editable
+                            width: parent.width
+                            spacing: 6
+                            Field {
+                                id: valueField
+                                width: parent.width - nullButton.width - 6
+                                text: parent.parent.isNull ? "" : String(parent.parent.value)
+                                placeholderText: parent.parent.isNull ? "NULL" : ""
+                                onEditingFinished: {
+                                    const was = parent.parent.isNull ? null : String(parent.parent.value)
+                                    if (text !== (was === null ? "" : was) || (was === null && text.length))
+                                        root.cellEdited(root.selectedRow, index, text)
+                                }
+                            }
+                            ActionButton {
+                                id: nullButton
+                                text: "NULL"
+                                implicitHeight: 32
+                                onClicked: root.cellEdited(root.selectedRow, index, null)
+                            }
+                        }
                         TextEdit {
+                            visible: !root.editable
                             width: parent.width
                             readOnly: true
                             selectByMouse: true
@@ -246,4 +342,28 @@ Item {
             }
         }
     }
+
+    ContextMenu {
+        id: cellMenu
+        ContextMenuItem { text: "Edit"; enabled: root.editable; onTriggered: root.startEdit(root.menuRow, root.menuColumn) }
+        ContextMenuItem { text: "Set to NULL"; enabled: root.editable; onTriggered: root.cellEdited(root.menuRow, root.menuColumn, null) }
+        ContextMenuItem {
+            readonly property bool deleted: root.menuRow >= 0 && root.model && root.model.rowDeleted !== undefined
+                                            && root.model.rowDeleted(root.menuRow)
+            text: deleted ? "Restore row" : "Delete row"
+            danger: !deleted
+            enabled: root.editable
+            onTriggered: root.deleteToggled(root.menuRow)
+        }
+        ContextMenuSeparator { }
+        ContextMenuItem {
+            text: "Copy value"
+            onTriggered: {
+                const v = root.valuesForRow ? root.valuesForRow(root.menuRow)[root.columns[root.menuColumn].name] : null
+                clipboard.text = v === null || v === undefined ? "NULL" : String(v)
+                clipboard.selectAll(); clipboard.copy()
+            }
+        }
+    }
+    TextEdit { id: clipboard; visible: false }
 }

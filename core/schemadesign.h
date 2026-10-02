@@ -173,6 +173,15 @@ public:
     /// is never touched.
     Q_INVOKABLE QString applyToCopy();
 
+    /// Run the migration on the database itself — once the user has allowed
+    /// changes (DatabaseSession::allowChanges). An SQLite file is backed up
+    /// first; the script runs in one transaction, so a failure changes
+    /// nothing (except on MySQL, which commits each change to the structure
+    /// as it goes). Afterwards the session re-reads the structure and the
+    /// design starts again from it.
+    /// `{ ok, error, failedStatement, done, backup }`.
+    Q_INVOKABLE QVariantMap applyToDatabase();
+
     /// The design as QiSchema would read it back.
     QVector<QiTableInfo> infos() const;
     const QVector<DesignTable> &designTables() const { return m_tables; }

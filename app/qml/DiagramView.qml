@@ -204,6 +204,13 @@ Item {
             links.model = d.links
             return
         }
+        // Where the user last left the cards, for the tables still here.
+        const saved = savedLayout()
+        for (let i = 0; i < cards.count; ++i) {
+            const c = cards.itemAt(i)
+            const at = c ? saved[c.name] : undefined
+            if (at) { c.x = at[0]; c.y = at[1] }
+        }
         refreshRects()
         links.model = d.links
         Qt.callLater(() => {
@@ -300,6 +307,73 @@ Item {
         }
         refreshRects()
         fit()
+        if (layoutKey.length) Prefs.setValue("layout/" + layoutKey, "")    // Tidy forgets the saved layout
+    }
+
+    // ---- Remembered layouts: where the cards were dragged, per database ----
+    property string layoutKey: ""           // set where a layout should be remembered ("" = not)
+    function savedLayout() {
+        if (!layoutKey.length) return ({})
+        try { return JSON.parse(Prefs.value("layout/" + layoutKey, "{}") || "{}") } catch (e) { return ({}) }
+    }
+    function saveLayout() {
+        if (!layoutKey.length) return
+        const o = {}
+        for (let i = 0; i < cards.count; ++i) {
+            const c = cards.itemAt(i)
+            if (c) o[c.name] = [Math.round(c.x), Math.round(c.y)]
+        }
+        Prefs.setValue("layout/" + layoutKey, JSON.stringify(o))
+    }
+
+    // ---- Export: the diagram as it is on screen (cards where they are now) ----
+    DiagramExport { id: exporter }
+    function snapshot() {
+        const tables = []
+        for (let i = 0; i < cards.count; ++i) {
+            const c = cards.itemAt(i)
+            if (!c) continue
+            const t = diagram.tables[c.cardIndex]
+            tables.push({ name: t.name, x: c.x, y: c.y, width: c.width, height: c.height,
+                          rows: t.rows === undefined ? -1 : t.rows, columns: t.columns })
+        }
+        const paths = []
+        for (let j = 0; j < links.count; ++j) {
+            const l = links.itemAt(j)
+            if (l && l.visible) paths.push({ path: l.pathText })
+        }
+        return { tables: tables, links: paths, headerHeight: diagram.headerHeight, rowHeight: diagram.rowHeight,
+                 title: source && source.displayName !== undefined ? source.displayName : "" }
+    }
+    property string exportOnLoad: ""        // --export-diagram: save there once laid out
+    Timer {
+        interval: 600; running: root.exportOnLoad.length > 0 && cards.count > 0
+        onTriggered: {
+            const ext = root.exportOnLoad.slice(root.exportOnLoad.lastIndexOf(".") + 1).toLowerCase()
+            const r = exporter.save(root.snapshot(), root.exportOnLoad, ext)
+            if (!r.ok) console.warn("export failed:", r.error)
+            root.exportOnLoad = ""
+        }
+    }
+    property string exportMessage: ""
+    property bool exportFailed: false
+    Timer { id: clearExportMessage; interval: 6000; onTriggered: root.exportMessage = "" }
+    DataFileDialog {
+        id: exportDialog
+        saving: true
+        onPicked: function (file) {
+            const r = exporter.save(root.snapshot(), file, kind)
+            root.exportFailed = !r.ok
+            root.exportMessage = r.ok ? "Saved " + String(r.path).slice(String(r.path).lastIndexOf("/") + 1) : r.error
+            clearExportMessage.restart()
+        }
+    }
+    ContextMenu {
+        id: exportMenu
+        implicitWidth: 200
+        ContextMenuItem { text: "PNG image…"; onTriggered: { exportDialog.kind = "png"; exportDialog.open() } }
+        ContextMenuItem { text: "SVG image…"; onTriggered: { exportDialog.kind = "svg"; exportDialog.open() } }
+        ContextMenuItem { text: "PDF…"; onTriggered: { exportDialog.kind = "pdf"; exportDialog.open() } }
     }
 
     // Where a link meets a card: the middle of the column's row, on the side facing the other card.
@@ -432,29 +506,28 @@ Item {
                         strokeWidth: link.lit ? 2.2 : 1.4
                         fillColor: "transparent"
                         capStyle: ShapePath.RoundCap
-                        PathSvg {
-                            path: {
-                                const a = link.a, b = link.b
-                                let p
-                                if (link.self) {
-                                    // A self-reference loops out and back on the same side.
-                                    const k = 60
-                                    p = `M ${a.x} ${a.y} C ${a.x + a.dir * k} ${a.y} ${a.x + a.dir * k} ${b.y} ${a.x} ${b.y + 0.01}`
-                                } else {
-                                    // Routed around any card in the way (see ErLayout::route).
-                                    p = DiagramGeometry.route(a.x, a.y, a.dir, b.x, b.y, b.dir, root.cardRects,
-                                                              root.indexOf[link.modelData.from], root.indexOf[link.modelData.to])
-                                }
-                                // Crow's foot at the "many" end.
-                                const fx = a.x + a.dir * 12
-                                p += ` M ${fx} ${a.y} L ${a.x} ${a.y - 6} M ${fx} ${a.y} L ${a.x} ${a.y + 6}`
-                                // Bar at the "one" end.
-                                const bdir = link.self ? a.dir : b.dir
-                                const ox = b.x + bdir * 9
-                                p += ` M ${ox} ${b.y - 6} L ${ox} ${b.y + 6}`
-                                return p
-                            }
+                        PathSvg { path: link.pathText }
+                    }
+                    readonly property string pathText: {
+                        const a = link.a, b = link.b
+                        let p
+                        if (link.self) {
+                            // A self-reference loops out and back on the same side.
+                            const k = 60
+                            p = `M ${a.x} ${a.y} C ${a.x + a.dir * k} ${a.y} ${a.x + a.dir * k} ${b.y} ${a.x} ${b.y + 0.01}`
+                        } else {
+                            // Routed around any card in the way (see ErLayout::route).
+                            p = DiagramGeometry.route(a.x, a.y, a.dir, b.x, b.y, b.dir, root.cardRects,
+                                                      root.indexOf[link.modelData.from], root.indexOf[link.modelData.to])
                         }
+                        // Crow's foot at the "many" end.
+                        const fx = a.x + a.dir * 12
+                        p += ` M ${fx} ${a.y} L ${a.x} ${a.y - 6} M ${fx} ${a.y} L ${a.x} ${a.y + 6}`
+                        // Bar at the "one" end.
+                        const bdir = link.self ? a.dir : b.dir
+                        const ox = b.x + bdir * 9
+                        p += ` M ${ox} ${b.y - 6} L ${ox} ${b.y + 6}`
+                        return p
                     }
                 }
             }
@@ -604,7 +677,12 @@ Item {
                             else if (root.hovered === card.name) root.hovered = ""
                         }
                     }
-                    DragHandler { id: drag; cursorShape: Qt.ClosedHandCursor; enabled: !root.linking }
+                    DragHandler {
+                        id: drag
+                        cursorShape: Qt.ClosedHandCursor
+                        enabled: !root.linking
+                        onActiveChanged: if (!active) root.saveLayout()      // remember where it was put
+                    }
                     TapHandler {
                         onTapped: root.tableClicked(card.name)
                         onDoubleTapped: root.openTable(card.name)
@@ -756,7 +834,13 @@ Item {
             Tool { label: "+"; tip: "Zoom in (⌘+)"; onActivated: root.zoomCentre(1.25) }
             Rectangle { width: 1; height: 18; color: Theme.separator; anchors.verticalCenter: parent.verticalCenter }
             Tool { label: "Fit"; tip: "Fit the whole schema (⌘0)"; onActivated: root.fit() }
-            Tool { label: "Tidy"; tip: "Re-run the automatic layout"; onActivated: root.resetLayout() }
+            Tool { label: "Tidy"; tip: "Re-run the automatic layout (and forget where cards were dragged)"; onActivated: root.resetLayout() }
+            Tool {
+                id: exportTool
+                label: "Export ▾"
+                tip: "Save the diagram as PNG, SVG or PDF"
+                onActivated: exportMenu.popup(exportTool, 0, -exportMenu.implicitHeight - 6)
+            }
             Rectangle { width: 1; height: 18; color: Theme.separator; anchors.verticalCenter: parent.verticalCenter }
             Tool {
                 id: scrollTool
@@ -765,6 +849,15 @@ Item {
                 onActivated: scrollMenu.popup(scrollTool, 0, -scrollMenu.implicitHeight - 6)
             }
         }
+    }
+
+    Rectangle {
+        visible: root.exportMessage.length > 0
+        anchors { left: parent.left; leftMargin: 16; bottom: parent.bottom; bottomMargin: 64 }
+        width: exportText.implicitWidth + 20; height: 28; radius: 8
+        color: Theme.surface; border.width: 1; border.color: root.exportFailed ? Theme.danger : Theme.separator
+        Text { id: exportText; anchors.centerIn: parent; text: root.exportMessage
+               color: root.exportFailed ? Theme.danger : Theme.positive; font.pixelSize: Theme.fontBody }
     }
 
     // What scrolling does, chosen from the zoom bar.

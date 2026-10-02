@@ -2,6 +2,7 @@
 
 #include "codegen.h"
 #include "diagramdata.h"
+#include "sqlscript.h"
 
 #include <QDir>
 #include <QFile>
@@ -14,6 +15,7 @@
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -498,7 +500,13 @@ QString Migration::sql(const QVector<QiTableInfo> &original, const QVector<Desig
                 lines << QStringLiteral("INSERT INTO %1 (%2)\n    SELECT %2 FROM %3;")
                              .arg(quoteOne(temp, dialect), kept.join(QStringLiteral(", ")), table);
             lines << QStringLiteral("DROP TABLE %1;").arg(table);
+            // Views and triggers name the old table, gone for a moment before
+            // the new one takes its name: don't check them at this rename.
+            // (Only here: legacy mode would also stop a real rename updating
+            // the references to it.)
+            lines << QStringLiteral("PRAGMA legacy_alter_table = ON;");
             lines << QStringLiteral("ALTER TABLE %1 RENAME TO %2;").arg(quoteOne(temp, dialect), quoteOne(bareName(t.after->info.name), dialect));
+            lines << QStringLiteral("PRAGMA legacy_alter_table = OFF;");
             // The other indexes went with the old table; recreate them on the new one.
             const QString indexes = createIndexes(t.after->info, dialect).trimmed();
             if (!indexes.isEmpty())
@@ -1665,21 +1673,9 @@ QString SchemaDesign::applyToCopy()
         if (!db.open()) {
             failure = db.lastError().text();
         } else {
-            // One statement at a time (QSqlQuery runs one); comments dropped first.
-            QString text;
-            for (const QString &line : script.split(QLatin1Char('\n')))
-                if (!line.trimmed().startsWith(QLatin1String("--")))
-                    text += line + QLatin1Char('\n');
-            QSqlQuery q(db);
-            for (const QString &statement : text.split(QLatin1Char(';'))) {
-                if (statement.trimmed().isEmpty())
-                    continue;
-                if (!q.exec(statement)) {
-                    failure = QStringLiteral("%1\n%2").arg(q.lastError().text(), statement.trimmed());
-                    q.exec(QStringLiteral("ROLLBACK"));
-                    break;
-                }
-            }
+            const SqlScript::Result r = SqlScript::run(db, SqlScript::split(script), true);
+            if (!r.ok)
+                failure = QStringLiteral("%1\n%2").arg(r.error, r.failedStatement);
             db.close();
         }
     }
@@ -1691,4 +1687,56 @@ QString SchemaDesign::applyToCopy()
     }
     setError(QString());
     return target;
+}
+
+QVariantMap SchemaDesign::applyToDatabase()
+{
+    auto fail = [this](const QString &message, const QString &statement = QString(), int done = 0) {
+        setError(message);
+        return QVariantMap{ { QStringLiteral("ok"), false }, { QStringLiteral("error"), message },
+                            { QStringLiteral("failedStatement"), statement }, { QStringLiteral("done"), done } };
+    };
+    if (!m_session || !m_session->isOpen())
+        return fail(tr("No database is open."));
+    if (!m_session->changesAllowed())
+        return fail(tr("Allow changes to %1 first.").arg(m_session->displayName()));
+    if (errorCount() > 0)
+        return fail(tr("Fix the design's errors first: the migration would fail."));
+    const QString script = migration();
+    if (script.isEmpty())
+        return fail(tr("There's nothing to apply: the design matches the database."));
+
+    // An SQLite file: a copy beside it first (or with Studio's data, if that folder is read-only).
+    QString backup;
+    if (m_dialect == QLatin1String("sqlite")) {
+        const QFileInfo source(m_session->filePath());
+        const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
+        const QString name = QStringLiteral("%1.backup-%2.%3").arg(source.completeBaseName(), stamp,
+                                                                  source.suffix().isEmpty() ? QStringLiteral("db") : source.suffix());
+        backup = source.dir().filePath(name);
+        if (!QFileInfo(source.absolutePath()).isWritable()) {
+            const QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/backups");
+            QDir().mkpath(dir);
+            backup = QDir(dir).filePath(name);
+        }
+        if (!QFile::copy(source.absoluteFilePath(), backup))
+            return fail(tr("Couldn't back up %1 first, so nothing was changed.").arg(source.fileName()));
+    }
+
+    const SqlScript::Result r = SqlScript::run(m_session->writeDatabase(), SqlScript::split(script), true);
+    if (!r.ok) {
+        QString message = tr("The migration failed, so nothing was changed: %1").arg(r.error);
+        if (m_dialect == QLatin1String("mysql") && r.done > 0)
+            message = tr("The migration failed after %1 of its steps: MySQL commits each change to the structure as it "
+                         "goes, so those are in place. %2").arg(r.done).arg(r.error);
+        if (!backup.isEmpty())
+            QFile::remove(backup);                    // the transaction kept the file as it was
+        return fail(message, r.failedStatement, r.done);
+    }
+
+    // Applied: the saved design is now the database's own structure.
+    discard();
+    setError(QString());
+    m_session->refresh();                             // re-reads; the design starts again from it
+    return { { QStringLiteral("ok"), true }, { QStringLiteral("done"), r.done }, { QStringLiteral("backup"), backup } };
 }

@@ -13,6 +13,10 @@ set(STUDIO_QML_FILES
     qml/ModelView.qml
     qml/ProjectView.qml
     qml/SamplesView.qml
+    qml/AllowChangesDialog.qml
+    qml/ExportButton.qml
+    qml/ImportDialog.qml
+    qml/CompareView.qml
     qml/FolderPicker.qml
     qml/IdeView.qml
     qml/CodeEditor.qml
@@ -20,6 +24,7 @@ set(STUDIO_QML_FILES
     qml/StepPill.qml
     qml/DesignerView.qml
     qml/DesignFileDialog.qml
+    qml/DataFileDialog.qml
     qml/QueryBuilderView.qml
     qml/ProfileView.qml
 )
