@@ -11,6 +11,8 @@
 #include "sampledatabase.h"
 #include "sampleschema.h"
 #include "datatransfer.h"
+#include "queryplan.h"
+#include "sqlcompleter.h"
 
 /// Studio against real servers holding the public sample databases
 /// (Pagila on PostgreSQL, Sakila and Employees on MySQL, Chinook on SQL Server).
@@ -349,6 +351,23 @@ private:
         QVERIFY(!m.save());
         m.discardChanges();
 
+        // Undo a save: an edit, a delete and a new row on review (nothing refers to it).
+        m.setTable("review");
+        m.sortBy(0);
+        const qint64 reviews = scalar(db, "SELECT COUNT(*) FROM review");
+        const qint64 ratingSum = scalar(db, "SELECT SUM(rating) FROM review");
+        QVERIFY(m.setCell(0, columnOf(m, "rating"), "1"));
+        m.toggleDelete(1);
+        const int fresh = m.addRow();
+        QVERIFY(m.setCell(fresh, columnOf(m, "book_id"), "7"));
+        QVERIFY(m.setCell(fresh, columnOf(m, "rating"), "5"));
+        QVERIFY(m.setCell(fresh, columnOf(m, "created"), "2025-01-01"));
+        QVERIFY2(m.save(), qPrintable(m.error()));
+        QVERIFY2(m.canUndo(), qPrintable(type + ": " + m.undoNote()));    // the new row's id was read back
+        QVERIFY2(m.undoSave(), qPrintable(type + ": " + m.error()));
+        QCOMPARE(scalar(db, "SELECT COUNT(*) FROM review"), reviews);
+        QCOMPARE(scalar(db, "SELECT SUM(rating) FROM review"), ratingSum);
+
         // A CSV import, all in one transaction.
         QTemporaryDir dir;
         QFile csv(dir.filePath("p.csv"));
@@ -536,6 +555,49 @@ private slots:
         QCOMPARE(db.error(), QString("Enter the name of the database to open."));
         QVERIFY(!db.connectTo({ { "type", "oracle" } }));
         QVERIFY(db.error().contains("Unknown database type"));
+    }
+    // Plans from the real servers, read into the same tree as SQLite's.
+    void plansOnServers()
+    {
+        struct Case { const char *env, *type, *db, *user, *pass, *scanSql, *indexSql; };
+        const Case cases[] = {
+            { "STUDIO_TEST_PG", "postgres", "pagila", "qivot", "qivot",
+              "SELECT * FROM film WHERE length > 100",
+              "SELECT f.title, l.name FROM film f JOIN language l ON l.language_id = f.language_id WHERE f.film_id = 7" },
+            { "STUDIO_TEST_MYSQL", "mysql", "sakila", "root", "qivot",
+              "SELECT * FROM film WHERE length > 100",
+              "SELECT rental_id FROM rental WHERE customer_id = 7" },        // idx_fk_customer_id
+            { "STUDIO_TEST_MSSQL", "sqlserver", "Chinook", "sa", "Qivot_Test1",
+              "SELECT * FROM Track WHERE Milliseconds > 300000",
+              "SELECT Name FROM Track WHERE AlbumId = 7" } };                 // IFK_TrackAlbumId
+        int ran = 0;
+        for (const Case &c : cases) {
+            if (qEnvironmentVariableIsEmpty(c.env))
+                continue;
+            DatabaseSession db;
+            QVERIFY2(db.connectTo(settings(c.type, c.env, c.db, c.user, c.pass)), qPrintable(db.error()));
+            QueryPlan p;
+            p.setSession(&db);
+            QVERIFY2(p.explain(c.scanSql), qPrintable(QString(c.type) + ": " + p.error() + " | raw "
+                                                      + QString::number(p.raw().size()) + ": " + p.raw().left(400)));
+            QVERIFY2(p.scans() >= 1, qPrintable(QString(c.type) + " scan: " + p.raw().left(600)));
+            QVERIFY2(p.explain(c.indexSql), qPrintable(QString(c.type) + ": " + p.error()));
+            QVERIFY2(!p.nodes().isEmpty(), qPrintable(QString(c.type) + ": " + p.raw().left(600)));
+            QVERIFY2(p.scans() == 0, qPrintable(QString(c.type) + " index: " + p.raw().left(600)));
+            // The session is still fine for an ordinary query afterwards (SQL Server's SHOWPLAN is off again).
+            QueryModel q;
+            q.setSession(&db);
+            QVERIFY2(q.run(c.indexSql), qPrintable(q.error()));
+            QVERIFY(q.resultRows() > 0);
+            // Autocomplete knows the server's tables.
+            SqlCompleter comp;
+            comp.setSession(&db);
+            const QString typed = QString("SELECT * FROM ") + QString(c.type == QString("sqlserver") ? "Tra" : "fil");
+            const QVariantList items = comp.complete(typed, typed.size(), false).value("items").toList();
+            QVERIFY2(!items.isEmpty(), c.type);
+            ++ran;
+        }
+        if (!ran) QSKIP("no STUDIO_TEST_* server set");
     }
     void changesOnPostgres()
     {

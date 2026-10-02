@@ -54,6 +54,10 @@ target_link_libraries(tst_diagramexport PRIVATE Qt::Test studiocore)
 add_test(NAME diagramexport COMMAND tst_diagramexport)
 set_tests_properties(diagramexport PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+add_executable(tst_querytools tst_querytools.cpp)
+target_link_libraries(tst_querytools PRIVATE Qt::Test studiocore)
+add_test(NAME querytools COMMAND tst_querytools)
+
 add_executable(tst_samples tst_samples.cpp)
 target_link_libraries(tst_samples PRIVATE Qt::Test studiocore)
 add_test(NAME samples COMMAND tst_samples)
@@ -92,6 +96,10 @@ add_test(NAME app_smoke_compare COMMAND qivot-studio --sample --view compare --s
 set_tests_properties(app_smoke_compare PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
 add_test(NAME app_smoke_diagram_export COMMAND qivot-studio --open-sample company --export-diagram ${CMAKE_CURRENT_BINARY_DIR}/company.pdf --smoke --shot-delay 2000)
 set_tests_properties(app_smoke_diagram_export PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
+add_test(NAME app_smoke_plan COMMAND qivot-studio --sample --view query --query "SELECT * FROM book WHERE pages > 300" --explain --smoke)
+set_tests_properties(app_smoke_plan PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
+add_test(NAME app_smoke_complete COMMAND qivot-studio --sample --view query --complete-demo --smoke)
+set_tests_properties(app_smoke_complete PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
 add_test(NAME app_smoke_welcome COMMAND qivot-studio --smoke)
 set_tests_properties(app_smoke_welcome PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
 

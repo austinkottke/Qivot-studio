@@ -273,6 +273,69 @@ private slots:
         QVERIFY(m.notEditableReason().contains("view"));
     }
 
+    // A save can be undone: old values back, deleted rows back, new rows gone —
+    // unless the rows changed since, or a delete cascaded elsewhere.
+    void undoesASave()
+    {
+        const QString file = m_dir.filePath("undo.db");
+        QFile::remove(file);
+        QVERIFY(QFile::copy(m_sample, file));
+        DatabaseSession db;
+        QVERIFY(db.open(file));
+        QVERIFY(db.allowChanges(true));
+        RowsModel m;
+        m.setSession(&db);
+        m.setTable("review");                                 // nothing refers to review
+        m.sortBy(0);
+        QSqlQuery q(QSqlDatabase::database(db.connectionName()));
+        auto snapshot = [&] {
+            QStringList rows;
+            QSqlQuery s(QSqlDatabase::database(db.connectionName()));
+            s.exec("SELECT id, book_id, customer_id, rating, body, created FROM review ORDER BY id");
+            while (s.next())
+                rows << QString("%1|%2|%3|%4|%5|%6").arg(s.value(0).toString(), s.value(1).toString(), s.value(2).toString(),
+                                                         s.value(3).toString(), s.value(4).toString(), s.value(5).toString());
+            return rows;
+        };
+        const QStringList before = snapshot();
+
+        const int rating = columnOf(m, "rating"), body = columnOf(m, "body");
+        QVERIFY(m.setCell(0, rating, "1"));
+        QVERIFY(m.setCell(0, body, QVariant()));
+        m.toggleDelete(1);
+        const int added = m.addRow();
+        QVERIFY(m.setCell(added, columnOf(m, "book_id"), "7"));
+        QVERIFY(m.setCell(added, rating, "5"));
+        QVERIFY(m.setCell(added, columnOf(m, "created"), "2025-01-01"));
+        QVERIFY(!m.canUndo());
+        QVERIFY2(m.save(), qPrintable(m.error()));
+        QVERIFY2(m.canUndo(), qPrintable(m.undoNote()));
+        QCOMPARE(m.savedCount(), 3);
+        QVERIFY(snapshot() != before);
+
+        QVERIFY2(m.undoSave(), qPrintable(m.error()));
+        QVERIFY(!m.canUndo());
+        QCOMPARE(snapshot(), before);                           // exactly as it was
+        QCOMPARE(db.table("review").value("rows").toLongLong(), qint64(6000));
+
+        // Changed since the save: undo refuses, and changes nothing.
+        QVERIFY(m.setCell(2, rating, "2"));
+        QVERIFY(m.save());
+        QSqlQuery w(db.writeDatabase());
+        QVERIFY(w.exec("UPDATE review SET rating = 4 WHERE id = (SELECT id FROM review ORDER BY id LIMIT 1 OFFSET 2)"));
+        const QStringList meddled = snapshot();
+        QVERIFY(!m.undoSave());
+        QVERIFY2(m.error().contains("changed since"), qPrintable(m.error()));
+        QCOMPARE(snapshot(), meddled);
+
+        // Deleting a publisher sets book.publisher_id to NULL elsewhere: no undo, and why.
+        m.setTable("publisher");
+        m.toggleDelete(0);
+        QVERIFY(m.save());
+        QVERIFY(!m.canUndo());
+        QVERIFY2(m.undoNote().contains("book"), qPrintable(m.undoNote()));
+    }
+
     void emptiesWhenDatabaseCloses()
     {
         RowsModel m;

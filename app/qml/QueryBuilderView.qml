@@ -17,8 +17,10 @@ Item {
     QueryBuilder { id: b; session: root.database }
 
     function run() { if (b.sql.length) root.query.run(b.sql) }
-    // Read-only and limited, so the result can keep up with the edits.
-    Timer { id: autorun; interval: 350; onTriggered: root.run() }
+    // Read-only and limited, so the result can keep up with the edits. Only
+    // while the builder is showing: the SQL tab shares the result.
+    Timer { id: autorun; interval: 350; onTriggered: if (root.visible) root.run() }
+    onVisibleChanged: if (visible) autorun.restart()
     Connections { target: b; function onChanged() { autorun.restart() } }
 
     // Books per author country, over 20 each, the biggest first.

@@ -53,6 +53,16 @@
     <td align="center"><sub><b>C++</b>: a Qivot model class for every table</sub></td>
     <td align="center"><sub><b>IDE</b>: the exported project, built and tested in Studio</sub></td>
   </tr>
+  <tr>
+    <td width="33%"><a href="docs/studio-editing.png"><img src="docs/studio-editing.png" alt="Editing the publisher table: an edited cell, a value set to NULL, a deleted row and a new one, with the unsaved changes ready to review as SQL and save"></a></td>
+    <td width="33%"><a href="docs/studio-compare.png"><img src="docs/studio-compare.png" alt="Comparing the bookshop with a changed copy: four differences and the migration that makes the copy match"></a></td>
+    <td width="33%"><a href="docs/studio-plan.png"><img src="docs/studio-plan.png" alt="A query's plan: four steps, one reading a whole table without an index, highlighted; the history of queries beside it"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Editing</b>: change, add and delete rows; review the SQL; save, then undo</sub></td>
+    <td align="center"><sub><b>Compare</b>: two databases' structures, and the SQL between them</sub></td>
+    <td align="center"><sub><b>Plan</b>: how the database would run a query, full scans flagged</sub></td>
+  </tr>
 </table>
 
 <p align="center"><sub>Click any screenshot to see it full size.</sub></p>
@@ -71,7 +81,10 @@ into Qivot C++ that you can build, test and run without leaving Studio.
   crow's-foot notation. Laid out automatically along the relationships, with
   lines routed around the tables in between. Zoom, pan, drag tables, find a
   table by name, and hover one to light up everything it connects to; a
-  minimap shows where you are.
+  minimap shows where you are. The mouse wheel zooms around the pointer (or
+  pans, if you'd rather: the Scroll menu chooses), a trackpad pans and
+  pinches, and choosing a table brings it into view. Cards stay where you drag
+  them, per database, and the diagram exports as **PNG, SVG or PDF**.
 - **Every table and view**, with live row counts, in a filterable sidebar.
 - **Columns** with their declared types, `NOT NULL`, defaults, and badges for
   primary keys, foreign keys and auto-increment.
@@ -90,12 +103,41 @@ into Qivot C++ that you can build, test and run without leaving Studio.
   keys, pick columns (counted, summed, averaged...), filter and sort. The SQL,
   in the database's own dialect, and the same query as Qivot C++ follow every
   change, and the result refreshes as you go.
-- **A SQL console**: syntax highlighting, ⌘↩ to run, history, results in the
-  same grid.
-- **Read-only by design.** Files open read-only, and PostgreSQL and MySQL
-  connections are made read-only on the server, so nothing can be changed
-  through Studio. (SQL Server has no such session setting; Studio never writes,
-  but use a read-only login to be certain.)
+- **A SQL console**: syntax highlighting and **autocomplete** that knows the
+  query (tables after `FROM`, a table's columns after `alias.`), ⌘↩ to run,
+  and **Explain** (⇧⌘↩) to see how the database would run it, without running
+  it: a tree of steps, estimated rows and cost, with every full table scan
+  flagged. On SQLite, PostgreSQL, MySQL and SQL Server.
+- **History and saved queries**, per database: every run with its rows and
+  time, failures included; save one by name (⌘S), find it again, double-click
+  to run.
+- **Export** any table (as filtered and sorted) or any query result, in full,
+  to **CSV or JSON**.
+- **Read-only until you say so.** Files open read-only, and PostgreSQL and
+  MySQL connections are made read-only on the server. Changing anything takes
+  an explicit **Allow changes**, which opens a separate connection for writing;
+  lock it again with one click. (SQL Server has no read-only session setting;
+  Studio doesn't write until you allow it, but a read-only login makes sure.)
+
+### Change
+
+Once changes are allowed, and always shown as SQL before they run:
+
+- **Edit rows**: double-click a cell, use the row inspector, add and delete
+  rows, set NULLs. Unsaved changes are marked in the grid; **Review SQL**,
+  **Discard** or **Save**, all in one transaction.
+- **Undo a save**: old values back, deleted rows back, new rows gone. Undo
+  checks the rows are still as they were saved and refuses, changing nothing,
+  if they aren't (or if a delete cascaded to other tables).
+- **Import CSV** into a table: the file's columns matched to the table's by
+  name (or by hand), commas, semicolons or tabs, in one transaction: a bad
+  row stops it with its line number, and nothing is imported.
+- **Apply a design to the database**: the migration runs in one transaction
+  (an SQLite file is backed up first), and the design starts again from the
+  result. MySQL commits each change to the structure as it goes, and says so.
+- **Compare** two databases' structures (a file, a server, or a sample): the
+  differences, and the SQL that makes either one match the other, to copy,
+  save, or apply.
 
 ### Design
 
@@ -113,8 +155,8 @@ into Qivot C++ that you can build, test and run without leaving Studio.
 - **Kept between runs**: edits are saved as you go and picked up when the
   database opens again; **Save…** / **Open…** a `.qivotdesign` file to keep or
   share one.
-- **Apply to a copy** (SQLite): run the migration on a copy of the file and open
-  it; the original is never touched.
+- **Apply** the migration to the database itself (see *Change*), or, for
+  SQLite, **to a copy** of the file, leaving the original untouched.
 
 ### Code
 
@@ -189,8 +231,12 @@ ctest --test-dir qivot-studio/build --output-on-failure
 | `--project <folder>` | open a CMake project in the IDE |
 | `--models <file>` | write Qivot models for every table to a header and quit |
 | `--export <folder>` | write a buildable project (models, example, tests) and quit |
+| `--allow-changes` | allow changes to the database once it's open |
+| `--compare-with <file>` | on the Compare screen (`--view compare`), compare with a file (or `sample:<id>`) |
+| `--export-diagram <file>` | save the diagram as `.png`, `.svg` or `.pdf` once it's laid out |
+| `--view query --query "…" --explain` | show a query's plan instead of running it |
 | `--dark`, `--light` | force the colour scheme |
-| `--size 1440x900`, `--find <table>`, `--select-row <n>`, `--design-demo`, `--design-tab sql`, `--builder-demo`, `--build` | for screenshots and demos |
+| `--size 1440x900`, `--find <table>`, `--select-row <n>`, `--design-demo`, `--design-tab sql`, `--builder-demo`, `--edit-demo`, `--complete-demo`, `--build`, `--wheel <notches>`, `--wheel-pixels <dx,dy>` | for screenshots, demos and tests |
 | `--shot <png>` | save a screenshot and quit |
 | `--smoke` | load and quit; exit 1 if any QML warning was logged (used by CI) |
 
@@ -217,16 +263,16 @@ test is skipped unless its `STUDIO_TEST_PG` / `STUDIO_TEST_MYSQL` /
 
 | Folder | What's there |
 |---|---|
-| `core/` | `QivotStudio.Core`: opening databases and describing them (`DatabaseSession`), paging any table's rows (`RowsModel`), the diagram layout (`ErLayout`), the SQL console (`QueryModel`), Qivot code generation (`CodeGen`), the designer and its migrations (`SchemaDesign`), the query builder (`QueryBuilder`), column profiles (`TableProfile`), project export (`ProjectExport`), building and testing (`ProjectBuild`), the IDE's files (`Workspace`), the samples (`SampleDatabase`, described once for every database by `SampleSchema`). Plain C++ with tests. |
+| `core/` | `QivotStudio.Core`: opening databases and describing them (`DatabaseSession`), paging any table's rows (`RowsModel`), the diagram layout (`ErLayout`), the SQL console (`QueryModel`), Qivot code generation (`CodeGen`), the designer and its migrations (`SchemaDesign`), the query builder (`QueryBuilder`), column profiles (`TableProfile`), project export (`ProjectExport`), building and testing (`ProjectBuild`), the IDE's files (`Workspace`), the samples (`SampleDatabase`, described once for every database by `SampleSchema`), running scripts (`SqlScript`), CSV/JSON in and out (`DataTransfer`, `CsvImport`), comparing schemas (`SchemaCompare`), diagram pictures (`DiagramExport`), query history (`QueryLibrary`), autocomplete (`SqlCompleter`) and plans (`QueryPlan`). Plain C++ with tests. |
 | `ui/` | `QivotUI`, the first cut of **qivot-ui**: theme tokens (light/dark) and components (`ActionButton`, `Badge`, `Card`, `FilterField`, `NavItem`, `SegmentedControl`, `TextBox`). Kept free of Studio specifics so it can become its own library. |
 | `app/` | The app: `main.cpp` and the screens in `qml/`. |
-| `tests/` | Tests for each of the above, including a migration round trip (apply to a copy, read it back, nothing left to change) and an exported project that really builds and passes its own tests; live-server tests; whole-app smoke tests. |
+| `tests/` | Tests for each of the above, including a migration round trip (apply to a copy, read it back, nothing left to change) and an exported project that really builds and passes its own tests; live-server tests (editing, undo, import, applying designs and plans on PostgreSQL, MySQL and SQL Server); whole-app smoke tests. |
 | `third_party/qivot/` | Qivot, as its single header (`qivot.hpp`; `qivot.cpp` compiles it once). Schema reading comes from its `QiSchema`. Exported projects get the same files. Update with `tools/update-qivot.sh`. |
 
 ## Roadmap
 
-1. **Analyzer**: DuckDB files; keyboard navigation and a history in the query
-   builder.
+1. **Analyzer**: DuckDB files; keyboard navigation in the query builder;
+   PostgreSQL and MySQL drivers bundled in the macOS app.
 2. **Designer**: send a design's models to an exported project, reorder
    columns by dragging.
 3. **IDE**: go to definition, find in files, build kits.

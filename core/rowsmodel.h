@@ -58,6 +58,12 @@ class RowsModel : public QAbstractTableModel {
     Q_PROPERTY(int pendingCount READ pendingCount NOTIFY pendingChanged)
     /// The statements save() would run, with the values written in.
     Q_PROPERTY(QStringList pendingSql READ pendingSql NOTIFY pendingChanged)
+    /// Whether the last save can be undone (see undoSave()).
+    Q_PROPERTY(bool canUndo READ canUndo NOTIFY undoChanged)
+    /// How many changes the last save made ("Saved 4 changes · Undo").
+    Q_PROPERTY(int savedCount READ savedCount NOTIFY undoChanged)
+    /// Why the last save can't be undone, when it can't ("" otherwise).
+    Q_PROPERTY(QString undoNote READ undoNote NOTIFY undoChanged)
 
 public:
     enum Role { NullRole = Qt::UserRole + 1, NumberRole, RawRole, EditedRole, DeletedRole, InsertedRole };
@@ -108,8 +114,16 @@ public:
     /// Forget every unsaved change.
     Q_INVOKABLE void discardChanges();
     /// Save every change in one transaction; on failure nothing is saved and
-    /// error() says which change failed.
+    /// error() says which change failed. The save can then be undone.
     Q_INVOKABLE bool save();
+
+    bool canUndo() const { return !m_undo.isEmpty() && m_undoTable == m_table; }
+    int savedCount() const { return m_savedCount; }
+    QString undoNote() const { return m_undoNote; }
+    /// Put back what the last save changed, in one transaction: old values
+    /// restored, deleted rows back, new rows gone. Refuses (changing nothing)
+    /// if those rows have changed since.
+    Q_INVOKABLE bool undoSave();
 
     /// How many pages are held right now (tests check the cache stays bounded).
     int cachedPages() const { return m_pages.size(); }
@@ -134,9 +148,12 @@ signals:
     void errorChanged();
     void editableChanged();
     void pendingChanged();
+    void undoChanged();
 
 private:
-    struct Column { QString name; QString type; bool primaryKey; };
+    struct Column { QString name; QString type; bool primaryKey; bool autoIncrement; };
+    // One step of undoing a save: a statement that must change exactly one row.
+    struct Inverse { QString sql; QVariantList binds; QString before, after; };
 
     void reload();                         // re-read columns and counts, drop the cache
     void requery();                        // counts and cache only (filter/sort changed)
@@ -158,6 +175,10 @@ private:
     bool           m_isTable = false;
     QHash<QString, Change> m_changes;           // existing rows, by their key
     QVector<QHash<int, QVariant>> m_inserts;    // new rows: column -> value
+    QVector<Inverse> m_undo;                    // the last save, backwards
+    QString m_undoTable;
+    int m_savedCount = 0;
+    QString m_undoNote;
     QString        m_table;
     QString        m_filter;
     int            m_sortColumn = -1;

@@ -65,6 +65,16 @@ static bool driverLoads(const QString &name)
     return ok;
 }
 
+// MySQL's client takes "localhost" to mean its local socket and ignores the
+// port, so a server in Docker on localhost:33069 is never reached; the local
+// MySQL answers instead. Asking for 127.0.0.1 goes over TCP to the port given.
+static QString serverHost(const QString &driver, const QString &host)
+{
+    if (driver == QLatin1String("QMYSQL") && host.trimmed().compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0)
+        return QStringLiteral("127.0.0.1");
+    return host;
+}
+
 QVariantMap DatabaseSession::availableTypes() const
 {
     static const QVariantMap types = {
@@ -201,7 +211,7 @@ bool DatabaseSession::connectTo(const QVariantMap &settings)
                                           "TrustServerCertificate=yes;ApplicationIntent=ReadOnly;")
                                .arg(odbcDriver, host).arg(port).arg(braced(database), braced(user), braced(password)));
     } else {
-        db.setHostName(host);
+        db.setHostName(serverHost(driver, host));
         db.setPort(port);
         db.setDatabaseName(database);
         db.setUserName(user);
@@ -334,7 +344,7 @@ bool DatabaseSession::allowChanges(bool on)
                                    .arg(m_settings.value(QStringLiteral("odbcDriver")).toString(), host).arg(port)
                                    .arg(braced(database), braced(user), braced(m_password)));
         } else {
-            db.setHostName(host);
+            db.setHostName(serverHost(driver, host));
             db.setPort(port);
             db.setDatabaseName(database);
             db.setUserName(user);

@@ -20,6 +20,8 @@ ApplicationWindow {
     property bool startupEditDemo: false      // --edit-demo
     property string startupCompare: ""        // --compare-with
     property string startupExportDiagram: ""  // --export-diagram
+    property bool startupExplain: false       // --explain
+    property bool startupCompleteDemo: false  // --complete-demo
     property string startupTable: ""
     property string startupView: ""          // "diagram" | "data" | "query" | "" (structure)
     property string startupQuery: ""         // from --query
@@ -186,6 +188,8 @@ ApplicationWindow {
             initialQuery: win.startupQuery
             startMode: win.startupQueryBuilder || win.startupBuilderDemo ? "builder" : ""
             builderDemo: win.startupBuilderDemo
+            explainInitialQuery: win.startupExplain
+            completeDemo: win.startupCompleteDemo
             runInitialQuery: win.startupQuery.length > 0
         }
 

@@ -40,6 +40,11 @@ void RowsModel::setTable(const QString &table)
         return;
     m_table = table;
     dropPending();
+    if (!m_undo.isEmpty()) {
+        m_undo.clear();
+        m_savedCount = 0;
+        emit undoChanged();
+    }
     // A new table starts unsorted and unfiltered.
     m_sortColumn = -1;
     m_sortDescending = false;
@@ -126,7 +131,8 @@ void RowsModel::reload()
         const QVariantMap c = v.toMap();
         m_columns << Column{ c.value(QStringLiteral("name")).toString(),
                              c.value(QStringLiteral("type")).toString(),
-                             c.value(QStringLiteral("primaryKey")).toBool() };
+                             c.value(QStringLiteral("primaryKey")).toBool(),
+                             c.value(QStringLiteral("autoIncrement")).toBool() };
     }
     m_primaryKey = info.value(QStringLiteral("primaryKey")).toStringList();
     m_isTable = info.value(QStringLiteral("kind")).toString() == QLatin1String("table");
@@ -580,32 +586,87 @@ bool RowsModel::save()
     }
     QSqlDatabase db = m_session->writeDatabase();
     const QString table = fromClause();
+    const QString dialect = m_session->dialect();
+    QStringList allCols;
+    for (const Column &c : m_columns)
+        allCols << quoted(c.name);
+    int keyColumn = -1;                          // a single-column key, for new rows' ids
+    if (m_primaryKey.size() == 1)
+        for (int i = 0; i < m_columns.size(); ++i)
+            if (m_columns.at(i).name == m_primaryKey.first())
+                keyColumn = i;
+    bool identity = false;                       // SQL Server: putting a deleted row back needs IDENTITY_INSERT
+    for (const Column &c : m_columns)
+        identity = identity || c.autoIncrement;
+
     if (!db.transaction()) {
         setError(db.lastError().text());
         return false;
     }
     QSqlQuery q(db);
-    auto run = [&](const QString &sql, const QVariantList &binds, const QString &what) {
+    QVector<Inverse> undo;
+    auto exec = [&](const QString &sql, const QVariantList &binds) {
         q.prepare(sql);
         for (const QVariant &b : binds)
             q.addBindValue(b);
-        if (q.exec())
-            return true;
+        return q.exec();
+    };
+    auto failed = [&](const QString &what) {
         setError(tr("Nothing was saved: %1 failed — %2").arg(what, q.lastError().text()));
         return false;
     };
+    // A row as it is now, by key (on the writing connection, inside the transaction).
+    auto current = [&](const QVariantList &key, QVariantList *values) {
+        QVariantList binds;
+        if (!exec(QStringLiteral("SELECT %1 FROM %2 WHERE %3").arg(allCols.join(QStringLiteral(", ")), table,
+                                                                  keyCondition(key, &binds, false)), binds) || !q.next())
+            return false;
+        values->clear();
+        for (int i = 0; i < m_columns.size(); ++i)
+            *values << q.value(i);
+        q.finish();
+        return true;
+    };
+    // "col = ?" for each, or "col IS NULL": how undo makes sure the row is still as saved.
+    auto matches = [&](const QHash<int, QVariant> &values, QVariantList *binds) {
+        QStringList parts;
+        for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
+            if (it.value().isNull()) {
+                parts << quoted(m_columns.at(it.key()).name) + QStringLiteral(" IS NULL");
+            } else {
+                parts << quoted(m_columns.at(it.key()).name) + QStringLiteral(" = ?");
+                *binds << it.value();
+            }
+        }
+        return parts;
+    };
+
     bool ok = true;
     // Deletes first (a new row may reuse a key), then updates, then new rows.
     for (const Change &c : std::as_const(m_changes)) {
         if (!ok || !c.deleted)
             continue;
+        QVariantList old;
+        if (!current(c.key, &old)) { ok = failed(tr("finding a row to delete")); break; }
         QVariantList binds;
         const QString where = keyCondition(c.key, &binds, false);
-        ok = run(QStringLiteral("DELETE FROM %1 WHERE %2").arg(table, where), binds, tr("deleting a row"));
+        if (!exec(QStringLiteral("DELETE FROM %1 WHERE %2").arg(table, where), binds)) { ok = failed(tr("deleting a row")); break; }
+        QStringList marks;
+        for (int i = 0; i < m_columns.size(); ++i)
+            marks << QStringLiteral("?");
+        Inverse inv{ QStringLiteral("INSERT INTO %1 (%2) VALUES (%3)").arg(table, allCols.join(QStringLiteral(", ")),
+                                                                          marks.join(QStringLiteral(", "))), old, {}, {} };
+        if (dialect == QLatin1String("sqlserver") && identity) {
+            inv.before = QStringLiteral("SET IDENTITY_INSERT %1 ON").arg(table);
+            inv.after = QStringLiteral("SET IDENTITY_INSERT %1 OFF").arg(table);
+        }
+        undo << inv;
     }
     for (const Change &c : std::as_const(m_changes)) {
         if (!ok || c.deleted || c.values.isEmpty())
             continue;
+        QVariantList old;
+        if (!current(c.key, &old)) { ok = failed(tr("finding a row to change")); break; }
         QStringList sets;
         QVariantList binds;
         for (auto it = c.values.constBegin(); it != c.values.constEnd(); ++it) {
@@ -613,8 +674,26 @@ bool RowsModel::save()
             binds << it.value();
         }
         const QString where = keyCondition(c.key, &binds, false);
-        ok = run(QStringLiteral("UPDATE %1 SET %2 WHERE %3").arg(table, sets.join(QStringLiteral(", ")), where),
-                 binds, tr("changing a row"));
+        if (!exec(QStringLiteral("UPDATE %1 SET %2 WHERE %3").arg(table, sets.join(QStringLiteral(", ")), where), binds)) {
+            ok = failed(tr("changing a row"));
+            break;
+        }
+        // Undo: the old values back, where the row still has the new ones (its key may be among them).
+        QVariantList newKey = c.key;
+        for (int k = 0; k < m_primaryKey.size(); ++k)
+            for (auto it = c.values.constBegin(); it != c.values.constEnd(); ++it)
+                if (m_columns.at(it.key()).name == m_primaryKey.at(k))
+                    newKey[k] = it.value();
+        QStringList restore;
+        QVariantList ib;
+        for (auto it = c.values.constBegin(); it != c.values.constEnd(); ++it) {
+            restore << quoted(m_columns.at(it.key()).name) + QStringLiteral(" = ?");
+            ib << old.value(it.key());
+        }
+        QStringList cond = { keyCondition(newKey, &ib, false) };
+        cond << matches(c.values, &ib);
+        undo << Inverse{ QStringLiteral("UPDATE %1 SET %2 WHERE %3").arg(table, restore.join(QStringLiteral(", ")),
+                                                                        cond.join(QStringLiteral(" AND "))), ib, {}, {} };
     }
     for (int r = 0; ok && r < m_inserts.size(); ++r) {
         const QHash<int, QVariant> &row = m_inserts.at(r);
@@ -627,12 +706,39 @@ bool RowsModel::save()
             marks << QStringLiteral("?");
             binds << row.value(c);
         }
-        const QString sql = cols.isEmpty()
-            ? (m_session->dialect() == QLatin1String("mysql") ? QStringLiteral("INSERT INTO %1 () VALUES ()").arg(table)
-                                                              : QStringLiteral("INSERT INTO %1 DEFAULT VALUES").arg(table))
-            : QStringLiteral("INSERT INTO %1 (%2) VALUES (%3)").arg(table, names.join(QStringLiteral(", ")),
-                                                                  marks.join(QStringLiteral(", ")));
-        ok = run(sql, binds, tr("adding row %1").arg(r + 1));
+        // The new row's key: given, or the one the database picked (asked for in its own way).
+        const bool keyGiven = keyColumn >= 0 && row.contains(keyColumn) && !row.value(keyColumn).isNull();
+        const QString keyName = keyColumn >= 0 ? quoted(m_columns.at(keyColumn).name) : QString();
+        const bool returning = keyColumn >= 0 && !keyGiven && dialect == QLatin1String("postgres");
+        const bool output = keyColumn >= 0 && !keyGiven && dialect == QLatin1String("sqlserver");
+        QString sql;
+        if (cols.isEmpty())
+            sql = dialect == QLatin1String("mysql") ? QStringLiteral("INSERT INTO %1 () VALUES ()").arg(table)
+                : output ? QStringLiteral("INSERT INTO %1 OUTPUT INSERTED.%2 DEFAULT VALUES").arg(table, keyName)
+                         : QStringLiteral("INSERT INTO %1 DEFAULT VALUES").arg(table);
+        else
+            sql = output ? QStringLiteral("INSERT INTO %1 (%2) OUTPUT INSERTED.%3 VALUES (%4)")
+                               .arg(table, names.join(QStringLiteral(", ")), keyName, marks.join(QStringLiteral(", ")))
+                         : QStringLiteral("INSERT INTO %1 (%2) VALUES (%3)")
+                               .arg(table, names.join(QStringLiteral(", ")), marks.join(QStringLiteral(", ")));
+        if (returning)
+            sql += QStringLiteral(" RETURNING ") + keyName;
+        if (!exec(sql, binds)) { ok = failed(tr("adding row %1").arg(r + 1)); break; }
+        QVariant id;
+        if (keyGiven)
+            id = row.value(keyColumn);
+        else if ((returning || output) && q.next())
+            id = q.value(0);
+        else if (keyColumn >= 0)
+            id = q.lastInsertId();
+        q.finish();
+        if (!id.isValid() || id.isNull()) {
+            undo << Inverse{ {}, {}, {}, {} };    // can't find it again: this save can't be undone
+            continue;
+        }
+        QVariantList ib;
+        QStringList cond = { keyCondition({ id }, &ib, false) };
+        undo << Inverse{ QStringLiteral("DELETE FROM %1 WHERE %2").arg(table, cond.join(QStringLiteral(" AND "))), ib, {}, {} };
     }
     if (ok && !db.commit()) {
         ok = false;
@@ -642,11 +748,89 @@ bool RowsModel::save()
         db.rollback();
         return false;
     }
+    const int saved = pendingCount();
     m_changes.clear();
     m_inserts.clear();
+    // Undone backwards; a step that can't be (an unknown new id) means the whole save can't.
+    m_undo.clear();
+    m_undoNote.clear();
+    bool complete = true;
+    for (const Inverse &i : undo)
+        complete = complete && !i.sql.isEmpty();
+    if (!complete)
+        m_undoNote = tr("A new row's key couldn't be read back, so this save can't be undone.");
+    // Deleting here may have deleted or changed rows elsewhere (ON DELETE CASCADE / SET NULL),
+    // which undo couldn't put back.
+    bool deleted = false;
+    for (const Inverse &i : std::as_const(undo))
+        deleted = deleted || i.sql.startsWith(QLatin1String("INSERT"));
+    if (deleted && complete) {
+        for (const QiTableInfo &t : m_session->tableInfos())
+            for (const QiForeignKeyInfo &fk : t.foreignKeys) {
+                const QString action = fk.onDelete.toUpper();
+                if (complete && fk.refTable == m_table && (action == QLatin1String("CASCADE") || action.startsWith(QLatin1String("SET")))) {
+                    complete = false;
+                    m_undoNote = tr("Deleting from %1 also changes %2 (ON DELETE %3), which undo couldn't put back, so this save can't be undone.")
+                                     .arg(m_table, t.name, action);
+                }
+            }
+    }
+    if (complete)
+        for (int i = undo.size() - 1; i >= 0; --i)
+            m_undo << undo.at(i);
+    m_undoTable = m_table;
+    m_savedCount = complete ? saved : 0;
     setError(QString());
     emit pendingChanged();
+    emit undoChanged();
     m_session->refresh();          // new row counts; reload() follows
+    return true;
+}
+
+bool RowsModel::undoSave()
+{
+    if (!canUndo())
+        return false;
+    if (!m_session || !m_session->changesAllowed()) {
+        setError(tr("Allow changes to undo the save."));
+        return false;
+    }
+    QSqlDatabase db = m_session->writeDatabase();
+    if (!db.transaction()) {
+        setError(db.lastError().text());
+        return false;
+    }
+    QSqlQuery q(db);
+    for (const Inverse &i : std::as_const(m_undo)) {
+        if (!i.before.isEmpty())
+            q.exec(i.before);
+        q.prepare(i.sql);
+        for (const QVariant &b : i.binds)
+            q.addBindValue(b);
+        const bool ran = q.exec();
+        const int affected = ran ? q.numRowsAffected() : -1;
+        if (!i.after.isEmpty())
+            QSqlQuery(db).exec(i.after);
+        if (!ran || affected != 1) {
+            setError(ran ? tr("Couldn't undo: some of the rows have changed since the save, so nothing was undone.")
+                         : tr("Couldn't undo, so nothing was: %1").arg(q.lastError().text()));
+            q = QSqlQuery();
+            db.rollback();
+            return false;
+        }
+    }
+    q = QSqlQuery();
+    if (!db.commit()) {
+        db.rollback();
+        setError(tr("Couldn't undo: %1").arg(db.lastError().text()));
+        return false;
+    }
+    m_undo.clear();
+    m_savedCount = 0;
+    m_undoNote.clear();
+    setError(QString());
+    emit undoChanged();
+    m_session->refresh();
     return true;
 }
 

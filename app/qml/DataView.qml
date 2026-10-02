@@ -149,7 +149,8 @@ Item {
     ResultGrid {
         id: results
         anchors { left: parent.left; right: parent.right; top: toolbar.bottom; topMargin: 12
-                  bottom: pendingBar.visible ? pendingBar.top : parent.bottom; bottomMargin: pendingBar.visible ? 10 : 0 }
+                  bottom: pendingBar.visible ? pendingBar.top : savedBar.visible ? savedBar.top : parent.bottom
+                  bottomMargin: pendingBar.visible || savedBar.visible ? 10 : 0 }
         model: rows
         editable: rows.editable
         onCellEdited: function (row, column, value) { rows.setCell(row, column, value) }
@@ -187,6 +188,35 @@ Item {
             ActionButton { text: "Review SQL"; implicitHeight: 32; onClicked: reviewDialog.open() }
             ActionButton { text: "Discard"; implicitHeight: 32; onClicked: rows.discardChanges() }
             ActionButton { text: "Save"; primary: true; implicitHeight: 32; onClicked: rows.save() }
+        }
+    }
+
+    // ---- After a save: undo it (or why it can't be) ----
+    property bool savedBarDismissed: false
+    Connections { target: rows; function onUndoChanged() { root.savedBarDismissed = false } }
+    Rectangle {
+        id: savedBar
+        visible: !pendingBar.visible && !root.savedBarDismissed && (rows.canUndo || rows.undoNote.length > 0)
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+        height: 48
+        radius: Theme.radius
+        color: Theme.surface
+        border.width: 1
+        border.color: Theme.separator
+        Text {
+            anchors { left: parent.left; leftMargin: 16; right: savedButtons.left; rightMargin: 12; verticalCenter: parent.verticalCenter }
+            text: rows.canUndo ? "Saved " + rows.savedCount + (rows.savedCount === 1 ? " change." : " changes.")
+                               : "Saved. " + rows.undoNote
+            color: rows.canUndo ? Theme.text : Theme.textSecondary
+            font.pixelSize: Theme.fontBody
+            elide: Text.ElideRight
+        }
+        Row {
+            id: savedButtons
+            anchors { right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
+            spacing: 8
+            ActionButton { visible: rows.canUndo; text: "Undo"; implicitHeight: 32; onClicked: rows.undoSave() }
+            ActionButton { text: "Dismiss"; implicitHeight: 32; onClicked: root.savedBarDismissed = true }
         }
     }
 

@@ -55,6 +55,9 @@ Q_IMPORT_QML_PLUGIN(QivotUIPlugin)
 #include "datatransfer.h"
 #include "schemacompare.h"
 #include "diagramexport.h"
+#include "querylibrary.h"
+#include "queryplan.h"
+#include "sqlcompleter.h"
 #include "schemadesign.h"
 #include "querymodel.h"
 #include "rowsmodel.h"
@@ -102,6 +105,9 @@ void registerQt5Types()
     qmlRegisterType<CsvImport>(uri, 1, 0, "CsvImport");
     qmlRegisterType<SchemaCompare>(uri, 1, 0, "SchemaCompare");
     qmlRegisterType<DiagramExport>(uri, 1, 0, "DiagramExport");
+    qmlRegisterType<QueryLibrary>(uri, 1, 0, "QueryLibrary");
+    qmlRegisterType<SqlCompleter>(uri, 1, 0, "SqlCompleter");
+    qmlRegisterType<QueryPlan>(uri, 1, 0, "QueryPlan");
     qmlRegisterSingletonType<DiagramGeometry>(uri, 1, 0, "DiagramGeometry", createSingleton<DiagramGeometry>);
     qmlRegisterSingletonType<Prefs>(uri, 1, 0, "Prefs", createSingleton<Prefs>);
 }
@@ -205,6 +211,10 @@ int main(int argc, char *argv[])
     const QCommandLineOption exportDiagram(QStringLiteral("export-diagram"),
                                            QStringLiteral("Save the diagram to <file> (.png, .svg or .pdf) once it's laid out."),
                                            QStringLiteral("file"));
+    const QCommandLineOption explainOption(QStringLiteral("explain"),
+                                           QStringLiteral("With --query: show its plan instead of running it."));
+    const QCommandLineOption completeDemo(QStringLiteral("complete-demo"),
+                                          QStringLiteral("On the SQL tab, start typing a query with suggestions open."));
     const QCommandLineOption wheel(QStringLiteral("wheel"),
                                    QStringLiteral("Scroll a mouse wheel <notches> (e.g. 3 or -2) at the middle of the window (tests)."),
                                    QStringLiteral("notches"));
@@ -214,7 +224,7 @@ int main(int argc, char *argv[])
     const QCommandLineOption shotDelay(QStringLiteral("shot-delay"),
                                        QStringLiteral("Wait <ms> before --shot / --smoke quit (default 1500)."),
                                        QStringLiteral("ms"));
-    cli.addOptions({ models, exportTo, queryBuilder, builderDemo, buildProject, projectFolder, designDemo, designMenu, designTab, projectsDir, shotDelay, allowChanges, editDemo, compareWith, exportDiagram, wheel, wheelPixels, sample, openSample, sampleSql, shot, smoke, table, view, connect, connectDialog, queryText, size, find, selectRow,
+    cli.addOptions({ models, exportTo, queryBuilder, builderDemo, buildProject, projectFolder, designDemo, designMenu, designTab, projectsDir, shotDelay, allowChanges, editDemo, compareWith, exportDiagram, explainOption, completeDemo, wheel, wheelPixels, sample, openSample, sampleSql, shot, smoke, table, view, connect, connectDialog, queryText, size, find, selectRow,
                     dark, light });
     cli.process(app);
 
@@ -279,6 +289,8 @@ int main(int argc, char *argv[])
         { QStringLiteral("startupEditDemo"), cli.isSet(editDemo) },
         { QStringLiteral("startupCompare"), cli.value(compareWith) },
         { QStringLiteral("startupExportDiagram"), cli.value(exportDiagram) },
+        { QStringLiteral("startupExplain"), cli.isSet(explainOption) },
+        { QStringLiteral("startupCompleteDemo"), cli.isSet(completeDemo) },
         { QStringLiteral("startupTable"),  cli.value(table) },
         { QStringLiteral("detailTab"),     cli.value(view) == QLatin1String("data") ? 1
                                          : cli.value(view) == QLatin1String("profile") ? 2

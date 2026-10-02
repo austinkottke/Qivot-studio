@@ -9,6 +9,9 @@ set(STUDIOCORE_SOURCES
     datatransfer.h    datatransfer.cpp
     schemacompare.h   schemacompare.cpp
     diagramexport.h   diagramexport.cpp
+    querylibrary.h    querylibrary.cpp
+    sqlcompleter.h    sqlcompleter.cpp
+    queryplan.h       queryplan.cpp
     rowsmodel.h       rowsmodel.cpp
     erlayout.h        erlayout.cpp
     diagramgeometry.h
