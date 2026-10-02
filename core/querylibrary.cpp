@@ -33,8 +33,8 @@ void QueryLibrary::load()
     if (m_scope.isEmpty())
         return;
     QSettings s;
-    // Kept as text: a QByteArray doesn't come back from the Windows registry as
-    // it went in. (toString() also reads what older versions stored as bytes.)
+    // Kept as text, readable in the registry or a plist; toString() also reads
+    // what older versions stored as bytes.
     m_history = QJsonDocument::fromJson(s.value(key("history")).toString().toUtf8()).array().toVariantList();
     m_saved = QJsonDocument::fromJson(s.value(key("saved")).toString().toUtf8()).array().toVariantList();
 }

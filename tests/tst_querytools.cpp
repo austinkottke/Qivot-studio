@@ -27,6 +27,10 @@ private slots:
     void initTestCase()
     {
         QStandardPaths::setTestModeEnabled(true);
+        // As the app does: without an organisation, QSettings on Windows can
+        // neither read nor write (elsewhere it falls back to a default).
+        QCoreApplication::setOrganizationName(QStringLiteral("Qivot"));
+        QCoreApplication::setApplicationName(QStringLiteral("Qivot Studio Tests"));
         QVERIFY(m_dir.isValid());
         QVERIFY(SampleDatabase::create(m_dir.filePath("shop.db")));
         QVERIFY(m_db.open(m_dir.filePath("shop.db")));
