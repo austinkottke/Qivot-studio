@@ -59,6 +59,10 @@ jobs:
           - { name: Intel,         runner: macos-15-intel, arch: x86_64 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    # bash by name runs steps with -o pipefail: a build piped into tee still fails the step.
+    defaults:
+      run:
+        shell: bash
     env:
       HAS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
       HAS_NOTARY: ${{ secrets.APPLE_ID != '' }}
@@ -130,6 +134,8 @@ jobs:
       # warning, and its drivers must load from inside it.
       - name: Check the app in the DMG
         run: |
+          exec > >(tee -a logs/release.log) 2>&1     # into the log the failure note shows
+          set -x
           mnt=$(hdiutil attach -nobrowse -readonly dist/*.dmg | tail -1 | sed 's/.*\(\/Volumes\/.*\)/\1/')
           app="$mnt/Qivot Studio.app/Contents/MacOS/Qivot Studio"
           lipo -archs "$app"
@@ -147,14 +153,15 @@ jobs:
         run: |
           import pathlib
           log = pathlib.Path("logs/release.log")
-          text = log.read_text(errors="replace")[-12000:] if log.exists() else "No log: it failed before building."
+          text = log.read_text(errors="replace")[-3500:] if log.exists() else "No log: it failed before building."
           print("::error title=Release build failed::" + text.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
 
       - uses: actions/upload-artifact@v4
+        if: always()          # a package that failed a check is kept too, to look at
         with:
           name: Qivot-Studio-${{ env.VERSION }}-macOS-${{ matrix.arch }}
           path: dist/*.dmg
-          if-no-files-found: error
+          if-no-files-found: ignore
 
   # ---- Windows: a zip, with the runner's PostgreSQL and MySQL client DLLs ----
   windows:
@@ -229,7 +236,7 @@ jobs:
         run: |
           import pathlib
           log = pathlib.Path("logs/release.log")
-          text = log.read_text(errors="replace")[-12000:] if log.exists() else "No log: it failed before building."
+          text = log.read_text(errors="replace")[-3500:] if log.exists() else "No log: it failed before building."
           print("::error title=Release build failed::" + text.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
 
       - uses: actions/upload-artifact@v4
@@ -243,6 +250,9 @@ jobs:
     name: Linux
     runs-on: ubuntu-22.04
     timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
     # Servers to connect to from the finished AppImage.
     services:
       postgres:
@@ -300,6 +310,8 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
+          exec > >(tee -a logs/release.log) 2>&1
+          set -x
           app=$(ls dist/*.AppImage)
           "$app" --sample --smoke
           "$app" --sample --builder-demo --smoke
@@ -311,7 +323,7 @@ jobs:
         run: |
           import pathlib
           log = pathlib.Path("logs/release.log")
-          text = log.read_text(errors="replace")[-12000:] if log.exists() else "No log: it failed before building."
+          text = log.read_text(errors="replace")[-3500:] if log.exists() else "No log: it failed before building."
           print("::error title=Release build failed::" + text.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
 
       - uses: actions/upload-artifact@v4

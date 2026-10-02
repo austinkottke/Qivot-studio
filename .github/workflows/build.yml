@@ -99,7 +99,7 @@ jobs:
                           b += "\n--- its report:\n" + report.read_text(errors="replace")[-8000:]
                   except Exception as e:
                       b += f"\n--- couldn't run it again: {e}\n"
-              body = b[-12000:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              body = b[-3500:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
               print(f"::error title={name.group(1) if name else 'tests'} failed::{body}")
 
       # A screenshot of the real app on every run, so UI changes are visible in review.
