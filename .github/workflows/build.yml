@@ -83,11 +83,18 @@ jobs:
               if command:
                   try:
                       args = [a.strip('"') for a in shlex.split(command.group(1), posix=False)]
+                      # A QtTest program also writes its report to a file, which
+                      # doesn't depend on the console's buffering.
+                      report = pathlib.Path(f"{name.group(1) if name else 'test'}-report.txt").resolve()
+                      if not any(a.startswith("--") for a in args[1:]):
+                          args += ["-o", f"{report},txt"]
                       run = subprocess.run(args,
                                            cwd=directory.group(1) if directory else None,
                                            capture_output=True, text=True, errors="replace", timeout=900)
                       b += f"\n--- run again: exit code {run.returncode} (0x{run.returncode & 0xFFFFFFFF:08X})\n"
                       b += (run.stdout + run.stderr)[-8000:]
+                      if report.exists():
+                          b += "\n--- its report:\n" + report.read_text(errors="replace")[-8000:]
                   except Exception as e:
                       b += f"\n--- couldn't run it again: {e}\n"
               body = b[-12000:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
