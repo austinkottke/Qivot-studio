@@ -55,6 +55,12 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
 
+      # Everything every test printed, whatever ctest showed above (it can come
+      # back empty, e.g. when a test dies before flushing).
+      - name: Test log
+        if: failure()
+        run: cmake -E cat build/Testing/Temporary/LastTest.log
+
       # A screenshot of the real app on every run, so UI changes are visible in review.
       - name: Screenshot
         if: runner.os == 'macOS'
