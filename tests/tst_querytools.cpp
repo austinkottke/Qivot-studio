@@ -6,6 +6,9 @@
 #include "queryplan.h"
 #include "sampledatabase.h"
 #include "sqlcompleter.h"
+#include "gridtools.h"
+#include "connectionhistory.h"
+#include "querymodel.h"
 
 /// The query screen's helpers: history and saved queries, autocomplete, and plans.
 class TestQueryTools : public QObject
@@ -190,6 +193,86 @@ private slots:
         QVERIFY(n.at(1).toMap().value("scan").toBool());
         QVERIFY(n.at(2).toMap().value("detail").toString().contains("using idx_book_author"));
         QVERIFY(!n.at(2).toMap().value("scan").toBool());
+    }
+
+    // ---- Copying and summing a block of the grid ----
+    void gridTools()
+    {
+        QueryModel q;
+        q.setSession(&m_db);
+        QVERIFY(q.run("SELECT 1 AS n, 'a,b' AS t, NULL AS z, 2.5 AS x UNION ALL "
+                      "SELECT 3, 'say \"hi\"', NULL, '4.5'"));
+        GridTools g;
+        QCOMPARE(g.text(&q, 0, 0, 1, 3, "tsv", false),
+                 QString("1\ta,b\t\t2.5\n3\t\"say \"\"hi\"\"\"\t\t4.5\n"));
+        QCOMPARE(g.text(&q, 1, 3, 0, 0, "csv", true),            // corners either way round
+                 QString("n,t,z,x\n1,\"a,b\",,2.5\n3,\"say \"\"hi\"\"\",,4.5\n"));
+        QCOMPARE(g.text(&q, 0, 0, 0, 0), QString("1\n"));
+        QVERIFY(g.text(&q, 5, 5, 6, 6).isEmpty());                 // outside
+
+        const QVariantMap all = g.summary(&q, 0, 0, 1, 3);
+        QCOMPARE(all.value("cells").toInt(), 8);
+        QCOMPARE(all.value("nulls").toInt(), 2);
+        QCOMPARE(all.value("numbers").toInt(), 4);                  // '4.5' as text counts
+        QCOMPARE(all.value("sum").toDouble(), 11.0);
+        QCOMPARE(all.value("avg").toDouble(), 2.75);
+        QCOMPARE(all.value("min").toDouble(), 1.0);
+        QCOMPARE(all.value("max").toDouble(), 4.5);
+        QVERIFY(!g.summary(&q, 0, 1, 1, 2).contains("sum"));        // no numbers there
+
+        QVERIFY(q.run("SELECT id FROM book ORDER BY id"));
+        const QVariantMap ids = g.summary(&q, 0, 0, q.rowCount() - 1, 0);
+        QCOMPARE(ids.value("numbers").toInt(), 1200);
+        QCOMPARE(ids.value("sum").toLongLong(), 1200LL * 1201 / 2);
+    }
+
+    // ---- Recent and saved connections ----
+    void connectionHistory()
+    {
+        {
+            ConnectionHistory h;
+            for (const QVariant &e : h.entries())
+                h.forget(e.toMap().value("id").toString());
+            QVERIFY(h.entries().isEmpty());
+
+            const QVariantMap pg{ { "type", "postgres" }, { "host", "db.example.com" }, { "port", 5432 },
+                                  { "database", "shop" }, { "user", "me" }, { "password", "secret" } };
+            const QString pgId = h.remember(pg);
+            const QString fileId = h.remember({ { "type", "sqlite" }, { "path", m_dir.filePath("shop.db") } });
+            QCOMPARE(h.entries().size(), 2);
+            QCOMPARE(h.entries().first().toMap().value("id").toString(), fileId);      // latest first
+            const QVariantMap server = h.entry(pgId);
+            QCOMPARE(server.value("kind").toString(), QString("server"));
+            QCOMPARE(server.value("title").toString(), QString("shop"));
+            QCOMPARE(server.value("detail").toString(), QString("PostgreSQL · me@db.example.com:5432"));
+            QVERIFY(!server.value("settings").toMap().contains("password"));          // never kept
+            QCOMPARE(h.entry(fileId).value("kind").toString(), QString("file"));
+            QVERIFY(!h.entry(fileId).value("missing").toBool());
+
+            // The same again moves to the top rather than repeating.
+            h.remember(pg);
+            QCOMPARE(h.entries().size(), 2);
+            QCOMPARE(h.entries().first().toMap().value("id").toString(), pgId);
+
+            // Saved ones stay, named, ahead of the rest, past the limit for recent ones.
+            h.setSaved(fileId, true, "Local shop");
+            for (int i = 0; i < ConnectionHistory::MaxRecent + 3; ++i)
+                h.remember({ { "type", "sqlite" }, { "path", m_dir.filePath(QString("other%1.db").arg(i)) } });
+            const QVariantList all = h.entries();
+            QCOMPARE(all.size(), ConnectionHistory::MaxRecent + 1);
+            QCOMPARE(all.first().toMap().value("title").toString(), QString("Local shop"));
+            QVERIFY(all.first().toMap().value("saved").toBool());
+            QVERIFY(h.entry(pgId).isEmpty());                                        // pushed out
+            QVERIFY(all.last().toMap().value("missing").toBool());                   // no such file
+        }
+        // Kept between runs.
+        ConnectionHistory again;
+        QCOMPARE(again.entries().first().toMap().value("title").toString(), QString("Local shop"));
+        again.rename(again.entries().first().toMap().value("id").toString(), "Shop");
+        QCOMPARE(again.entries().first().toMap().value("title").toString(), QString("Shop"));
+        for (const QVariant &e : again.entries())
+            again.forget(e.toMap().value("id").toString());
+        QVERIFY(again.entries().isEmpty());
     }
 };
 

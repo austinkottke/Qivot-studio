@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Qt 6.5+ is the main target; Qt 5.15 builds too, with QML modules assembled
 # by hand (see compat/qt5/) since Qt 5's CMake has no qt_add_qml_module.
-set(STUDIO_QT_COMPONENTS Core Gui Qml Quick QuickControls2 Sql Test)
+set(STUDIO_QT_COMPONENTS Core Gui Network Qml Quick QuickControls2 Sql Test)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
 if(QT_VERSION_MAJOR EQUAL 6)
     find_package(Qt6 6.5 REQUIRED COMPONENTS ${STUDIO_QT_COMPONENTS})

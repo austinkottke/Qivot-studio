@@ -9,7 +9,10 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QVector>
+#include <memory>
 #include <qivot.hpp>
+
+class SshTunnel;
 
 /// One open database, as the UI sees it.
 /**
@@ -102,7 +105,13 @@ public:
     Q_INVOKABLE bool open(const QVariant &fileOrUrl);
 
     /// Connect to a server: `{ type: "postgres"|"mysql"|"sqlserver", host, port,
-    /// database, user, password }`. port may be omitted for the usual one.
+    /// database, user, password, ssl?, ssh? }`. port may be omitted for the usual one.
+    ///  - `ssl: { mode, ca, cert, key, trust }`: PostgreSQL's sslmode ("disable" …
+    ///    "verify-full") and certificate files; MySQL: TLS with the CA file given
+    ///    (mode "off" to leave it); SQL Server: Encrypt "off" | "on" | "strict",
+    ///    and whether to trust the server's certificate (`trust`, default yes).
+    ///  - `ssh: { host, port, user, key }`: reach the database through an SSH
+    ///    server (see SshTunnel); host and port are then as that server sees them.
     Q_INVOKABLE bool connectTo(const QVariantMap &settings);
 
     /// Create sample `id` (default: the bookshop) in the app's data folder —
@@ -148,6 +157,17 @@ public:
     /// The Qt connection name, for code that needs raw access (RowsModel, tests).
     QString connectionName() const { return m_connection; }
 
+    /// A connection of its own to the same database, named `name`, for another
+    /// thread (Qt's connections belong to the thread that opens them), made as
+    /// read-only as the session's own. Call it from the thread that will use it,
+    /// and QSqlDatabase::removeDatabase(name) when done. Not open (with `error`)
+    /// if it failed.
+    static QSqlDatabase openReadOnlyClone(const QString &connection, const QString &name, QString *error = nullptr);
+
+    /// Make a server session read-only where the database has a switch for it
+    /// (PostgreSQL, MySQL); false where it hasn't (SQL Server) or it failed.
+    static bool makeReadOnly(QSqlDatabase &db);
+
 signals:
     void sampleChanged();
     void changesAllowedChanged();
@@ -177,6 +197,9 @@ private:
     QHash<QString, QString> m_sqlNames;
     QVariantMap             m_settings;
     QString                 m_password;
+    std::unique_ptr<SshTunnel> m_tunnel;
+    QString                 m_serverHost;      // where the connections go: the server, or the tunnel's end
+    int                     m_serverPort = 0;
 };
 
 #endif // DATABASESESSION_H

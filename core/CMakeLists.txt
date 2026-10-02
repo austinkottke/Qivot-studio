@@ -11,6 +11,9 @@ set(STUDIOCORE_SOURCES
     diagramexport.h   diagramexport.cpp
     querylibrary.h    querylibrary.cpp
     sqlcompleter.h    sqlcompleter.cpp
+    gridtools.h       gridtools.cpp
+    connectionhistory.h connectionhistory.cpp
+    sshtunnel.h       sshtunnel.cpp
     queryplan.h       queryplan.cpp
     rowsmodel.h       rowsmodel.cpp
     erlayout.h        erlayout.cpp
@@ -43,4 +46,4 @@ else()
     add_library(studiocore STATIC ${STUDIOCORE_SOURCES})
 endif()
 target_include_directories(studiocore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(studiocore PUBLIC Qt::Core Qt::Gui Qt::Qml Qt::Quick Qt::Sql qivot)
+target_link_libraries(studiocore PUBLIC Qt::Core Qt::Gui Qt::Network Qt::Qml Qt::Quick Qt::Sql qivot)

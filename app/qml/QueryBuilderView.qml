@@ -16,9 +16,9 @@ Item {
 
     QueryBuilder { id: b; session: root.database }
 
-    function run() { if (b.sql.length) root.query.run(b.sql) }
-    // Read-only and limited, so the result can keep up with the edits. Only
-    // while the builder is showing: the SQL tab shares the result.
+    // In the background (a new run replaces one still going), so a slow
+    // server doesn't hold up the edits. Only while the builder is showing.
+    function run() { if (b.sql.length) root.query.start(b.sql) }
     Timer { id: autorun; interval: 350; onTriggered: if (root.visible) root.run() }
     onVisibleChanged: if (visible) autorun.restart()
     Connections { target: b; function onChanged() { autorun.restart() } }
@@ -352,6 +352,8 @@ Item {
                 verticalAlignment: Text.AlignVCenter
                 elide: Text.ElideRight
                 text: !b.sql.length ? "Pick a table to start."
+                      : root.query.running ? "Running…"
+                      : root.query.notice.length ? root.query.notice
                       : root.query.error.length ? root.query.error
                       : root.query.hasResult ? Number(root.query.resultRows).toLocaleString(Qt.locale(), "f", 0)
                                                + (root.query.resultRows === 1 ? " row" : " rows") + "  ·  " + root.query.elapsedMs + " ms"

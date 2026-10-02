@@ -13,6 +13,9 @@
 #include "datatransfer.h"
 #include "queryplan.h"
 #include "sqlcompleter.h"
+#include "sshtunnel.h"
+#include <QProcess>
+#include <QTemporaryDir>
 
 /// Studio against real servers holding the public sample databases
 /// (Pagila on PostgreSQL, Sakila and Employees on MySQL, Chinook on SQL Server).
@@ -536,6 +539,132 @@ private slots:
         QVERIFY(q.notice().contains("Rolled back"));
         QVERIFY(q.run("SELECT COUNT(*) FROM Track WHERE Name = 'renamed by test'"));
         QCOMPARE(q.data(q.index(0, 0), QueryModel::RawRole).toInt(), 0);     // still none: undone
+    }
+
+    // A query in the background stays read-only, and Stop has the server cancel
+    // it: the worker comes back within moments, not after the 30 s it asked for.
+    void stopsOnServers()
+    {
+        struct Case { const char *env, *type, *db, *user, *pass, *sleepSql, *writeSql; };
+        const Case cases[] = {
+            { "STUDIO_TEST_PG", "postgres", "pagila", "qivot", "qivot", "SELECT pg_sleep(30)", "DELETE FROM rental" },
+            { "STUDIO_TEST_MYSQL", "mysql", "sakila", "root", "qivot", "SELECT SLEEP(30)", "UPDATE film SET title = 'X'" },
+            { "STUDIO_TEST_MSSQL", "sqlserver", "Chinook", "sa", "Qivot_Test1", "WAITFOR DELAY '00:00:30'", nullptr },
+        };
+        bool ran = false;
+        for (const Case &c : cases) {
+            if (qEnvironmentVariableIsEmpty(c.env))
+                continue;
+            ran = true;
+            DatabaseSession db;
+            QVERIFY2(db.connectTo(settings(c.type, c.env, c.db, c.user, c.pass)), qPrintable(db.error()));
+            QueryModel q;
+            q.setSession(&db);
+            QSignalSpy done(&q, &QueryModel::finished);
+            if (c.writeSql) {
+                q.start(c.writeSql);
+                QVERIFY2(done.wait(20000), c.type);
+                QVERIFY2(q.error().contains("read", Qt::CaseInsensitive), qPrintable(QString(c.type) + ": " + q.error()));
+            }
+            q.start(c.sleepSql);
+            QTest::qWait(1500);                // long enough to be under way on the server
+            QVERIFY2(q.running(), c.type);
+            QElapsedTimer t;
+            t.start();
+            q.cancel();
+            QVERIFY(q.cancelled());
+            QVERIFY2(q.waitForBackground(10000), c.type);
+            QVERIFY2(t.elapsed() < 10000, qPrintable(QString("%1 took %2 ms to stop").arg(c.type).arg(t.elapsed())));
+            // And the session is fine afterwards.
+            QVERIFY2(q.run("SELECT 1"), qPrintable(QString(c.type) + ": " + q.error()));
+        }
+        if (!ran) QSKIP("no STUDIO_TEST_* server set");
+    }
+
+    // The TLS settings reach each driver: shown by what a server without TLS
+    // (or with a self-signed certificate) makes of them.
+    void sslOptions()
+    {
+        bool ran = false;
+        if (!qEnvironmentVariableIsEmpty("STUDIO_TEST_PG")) {
+            ran = true;
+            DatabaseSession db;
+            QVariantMap s = settings("postgres", "STUDIO_TEST_PG", "pagila", "qivot", "qivot");
+            s["ssl"] = QVariantMap{ { "mode", "disable" } };
+            QVERIFY2(db.connectTo(s), qPrintable(db.error()));
+            QCOMPARE(db.connectionSettings().value("ssl").toMap().value("mode").toString(), QString("disable"));
+            s["ssl"] = QVariantMap{ { "mode", "require" } };            // the test server has no TLS
+            QVERIFY(!db.connectTo(s));
+            QVERIFY2(db.error().contains("SSL", Qt::CaseInsensitive), qPrintable(db.error()));
+        }
+        if (!qEnvironmentVariableIsEmpty("STUDIO_TEST_MYSQL")) {
+            ran = true;
+            DatabaseSession db;
+            QVariantMap s = settings("mysql", "STUDIO_TEST_MYSQL", "sakila", "root", "qivot");
+            s["ssl"] = QVariantMap{ { "mode", "on" }, { "ca", "/no/such/ca.pem" } };
+            QVERIFY(!db.connectTo(s));                                  // asked to check with a CA it can't read
+            s["ssl"] = QVariantMap{ { "mode", "off" }, { "ca", "/no/such/ca.pem" } };
+            QVERIFY2(db.connectTo(s), qPrintable(db.error()));          // off: the file isn't used
+        }
+        if (!qEnvironmentVariableIsEmpty("STUDIO_TEST_MSSQL")) {
+            ran = true;
+            DatabaseSession db;
+            QVariantMap s = settings("sqlserver", "STUDIO_TEST_MSSQL", "Chinook", "sa", "Qivot_Test1");
+            s["ssl"] = QVariantMap{ { "mode", "off" } };
+            QVERIFY2(db.connectTo(s), qPrintable(db.error()));
+            s["ssl"] = QVariantMap{ { "mode", "strict" } };            // a self-signed certificate: refused
+            QVERIFY(!db.connectTo(s));
+            s["ssl"] = QVariantMap{ { "mode", "on" }, { "trust", false } };
+            QVERIFY(!db.connectTo(s));
+            s["ssl"] = QVariantMap{ { "mode", "on" }, { "trust", true } };
+            QVERIFY2(db.connectTo(s), qPrintable(db.error()));
+        }
+        if (!ran) QSKIP("no STUDIO_TEST_* server set");
+    }
+
+    // Through SSH: STUDIO_TEST_SSH is the SSH server (host:port), which can
+    // reach STUDIO_TEST_PG; STUDIO_TEST_SSH_KEY its key (user STUDIO_TEST_SSH_USER, root).
+    void throughSsh()
+    {
+        if (qEnvironmentVariableIsEmpty("STUDIO_TEST_SSH") || qEnvironmentVariableIsEmpty("STUDIO_TEST_PG"))
+            QSKIP("STUDIO_TEST_SSH and STUDIO_TEST_PG not set");
+        if (SshTunnel::sshProgram().isEmpty())
+            QSKIP("no ssh here");
+        const QString sshWhere = qEnvironmentVariable("STUDIO_TEST_SSH");
+        QVariantMap s = settings("postgres", "STUDIO_TEST_PG", "pagila", "qivot", "qivot");
+        s["ssh"] = QVariantMap{ { "host", sshWhere.section(':', 0, 0) }, { "port", sshWhere.section(':', 1, 1).toInt() },
+                                { "user", qEnvironmentVariable("STUDIO_TEST_SSH_USER", "root") },
+                                { "key", qEnvironmentVariable("STUDIO_TEST_SSH_KEY") } };
+        {
+            DatabaseSession db;
+            QVERIFY2(db.connectTo(s), qPrintable(db.error()));
+            QVERIFY(db.location().contains(" via "));
+            QCOMPARE(db.connectionSettings().value("ssh").toMap().value("host").toString(), sshWhere.section(':', 0, 0));
+            QVERIFY(scalar(db, "SELECT COUNT(*) FROM film") == 1000);
+            // A query in the background, and a writing connection, go the same way.
+            QueryModel q;
+            q.setSession(&db);
+            QSignalSpy done(&q, &QueryModel::finished);
+            q.start("SELECT COUNT(*) FROM actor");
+            QVERIFY(done.wait(20000));
+            QVERIFY2(q.error().isEmpty(), qPrintable(q.error()));
+            QCOMPARE(q.data(q.index(0, 0), QueryModel::RawRole).toInt(), 200);
+            QVERIFY2(db.allowChanges(true), qPrintable(db.error()));
+            QSqlQuery w(db.writeDatabase());
+            QVERIFY2(w.exec("SELECT 1"), qPrintable(w.lastError().text()));
+            w = QSqlQuery();
+            db.close();
+        }
+        // A key the server doesn't know: told why.
+        QTemporaryDir dir;
+        const QString badKey = dir.filePath("bad");
+        QVERIFY(QProcess::execute("ssh-keygen", { "-q", "-t", "ed25519", "-N", "", "-f", badKey }) == 0);
+        QVariantMap ssh = s.value("ssh").toMap();
+        ssh["key"] = badKey;
+        s["ssh"] = ssh;
+        DatabaseSession db;
+        QVERIFY(!db.connectTo(s));
+        QVERIFY2(db.error().contains("SSH tunnel") && db.error().contains("Permission denied"), qPrintable(db.error()));
     }
 
     void friendlyErrors()

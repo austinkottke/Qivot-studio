@@ -1,10 +1,14 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QivotUI 1.0
+import QivotStudio.Core 1.0
 
-/// A grid of rows from any model with display / isNull / isNumber roles —
+/// A grid of rows from any model with display / isNull / isNumber / raw roles —
 /// a table's data or a query's result. Row numbers, optional sortable headers,
 /// alternate shading, and an inspector showing the selected row in full.
+/// Cells select as a block (drag, or Shift-click; a row number takes the row,
+/// ⌘A everything): ⌘C copies it as tab-separated text, and the bar underneath
+/// counts it and sums its numbers.
 Item {
     id: root
     property var model
@@ -32,6 +36,78 @@ Item {
     property int menuColumn: -1
 
     property int selectedRow: -1
+
+    // ---- The selected block: from where it started (anchor) to where it ends ----
+    property int anchorRow: -1
+    property int anchorColumn: -1
+    property int endRow: -1
+    property int endColumn: -1
+    readonly property bool hasSelection: anchorRow >= 0 && endRow >= 0
+    readonly property int selTop: Math.min(anchorRow, endRow)
+    readonly property int selBottom: Math.max(anchorRow, endRow)
+    readonly property int selLeft: Math.min(anchorColumn, endColumn)
+    readonly property int selRight: Math.max(anchorColumn, endColumn)
+    readonly property int selectedCells: hasSelection ? (selBottom - selTop + 1) * (selRight - selLeft + 1) : 0
+    function inSelection(r, c) { return hasSelection && r >= selTop && r <= selBottom && c >= selLeft && c <= selRight }
+    function selectBlock(r1, c1, r2, c2) { anchorRow = r1; anchorColumn = c1; endRow = r2; endColumn = c2 }
+    function clearSelection() { anchorRow = -1; anchorColumn = -1; endRow = -1; endColumn = -1 }
+    function selectAll() {
+        if (grid.rows > 0 && grid.columns > 0) selectBlock(0, 0, grid.rows - 1, grid.columns - 1)
+    }
+    // The cell under a point in the grid's content (rows are 30 high).
+    function cellAt(x, y) {
+        const r = Math.max(0, Math.min(grid.rows - 1, Math.floor(y / 30)))
+        let c = 0, edge = 0
+        for (; c < grid.columns; ++c) {
+            edge += columnWidth(c)
+            if (x < edge) break
+        }
+        return { row: r, column: Math.max(0, Math.min(grid.columns - 1, c)) }
+    }
+    property string copiedNote: ""
+    function copySelection(format, headers) {
+        if (!hasSelection || !model) return
+        let text = GridTools.text(model, selTop, selLeft, selBottom, selRight, format, headers)
+        const rows = selBottom - selTop + 1
+        if (rows === 1 && !headers) text = text.replace(/\n$/, "")       // one row: no line break after it
+        clipboard.text = text
+        clipboard.selectAll(); clipboard.copy()
+        copiedNote = "Copied " + (selectedCells === 1 ? "1 value"
+                     : fmt(Math.min(rows, 100000)) + (rows === 1 ? " row" : " rows") + (rows > 100000 ? " (the most at once)" : ""))
+                     + (format === "csv" ? " as CSV" : "")
+        copiedTimer.restart()
+    }
+    Timer { id: copiedTimer; interval: 2200; onTriggered: root.copiedNote = "" }
+    // The bar's figures, worked out once the selection settles.
+    property var summary: ({ cells: 0 })
+    readonly property string selectionKey: selTop + "," + selLeft + "," + selBottom + "," + selRight
+    onSelectionKeyChanged: summarize.restart()
+    Timer {
+        id: summarize
+        interval: 120
+        onTriggered: root.summary = root.selectedCells > 1 && root.model
+                     ? GridTools.summary(root.model, root.selTop, root.selLeft, root.selBottom, root.selRight) : ({ cells: 0 })
+    }
+    function num(x) {
+        const s = Number(x).toLocaleString(Qt.locale(), "f", Number.isInteger(x) ? 0 : 4)
+        const dp = Qt.locale().decimalPoint
+        return s.indexOf(dp) < 0 ? s : s.replace(new RegExp("\\" + dp + "?0+$"), "")
+    }
+    Connections {
+        target: root.model
+        ignoreUnknownSignals: true
+        function onModelReset() { root.clearSelection() }
+    }
+    // --select-cells (screenshots): a block selected once there are rows.
+    property bool startupCellsDone: false
+    function takeStartupCells() {
+        if (startupCellsDone || !startupCells.length || grid.rows === 0 || !root.visible) return
+        const p = startupCells.split(",").map(Number)
+        if (p.length !== 4) return
+        startupCellsDone = true
+        selectBlock(p[0] - 1, p[1] - 1, p[2] - 1, p[3] - 1)
+    }
+    Connections { target: grid; function onRowsChanged() { Qt.callLater(root.takeStartupCells) } }
     // Re-read after each edit (pendingCount moves), so the inspector shows unsaved values.
     readonly property var selectedValues: (model && model.pendingCount, selectedRow >= 0 && valuesForRow
                                            ? valuesForRow(selectedRow) : ({}))
@@ -64,11 +140,12 @@ Item {
         return Math.max(w, col.name.length * 8 + 44)
     }
 
-    onColumnsChanged: { selectedRow = -1; grid.forceLayout() }
+    onColumnsChanged: { selectedRow = -1; clearSelection(); grid.forceLayout() }
 
     Rectangle {
         id: frame
-        anchors { left: parent.left; top: parent.top; bottom: parent.bottom
+        anchors { left: parent.left; top: parent.top; bottom: selectionBar.visible ? selectionBar.top : parent.bottom
+                  bottomMargin: selectionBar.visible ? 6 : 0
                   right: inspector.visible ? inspector.left : parent.right
                   rightMargin: inspector.visible ? 12 : 0 }
         radius: Theme.radius
@@ -122,10 +199,18 @@ Item {
                 MouseArea {
                     id: headerMouse
                     anchors.fill: parent
-                    enabled: root.sortable
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.sortRequested(column)
+                    hoverEnabled: root.sortable
+                    cursorShape: root.sortable ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    // Sorts where the grid can; otherwise takes the whole column.
+                    onClicked: function (mouse) {
+                        if (root.sortable) { root.sortRequested(column); return }
+                        grid.forceActiveFocus()
+                        if (grid.rows === 0) return
+                        if ((mouse.modifiers & Qt.ShiftModifier) && root.hasSelection)
+                            root.selectBlock(0, root.anchorColumn, grid.rows - 1, column)
+                        else
+                            root.selectBlock(0, column, grid.rows - 1, column)
+                    }
                 }
             }
         }
@@ -149,6 +234,20 @@ Item {
                     font.family: Theme.monoFont
                 }
                 Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: Theme.separator }
+                // A row number takes the whole row (Shift: down to here).
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: function (mouse) {
+                        grid.forceActiveFocus()
+                        const last = Math.max(0, grid.columns - 1)
+                        if ((mouse.modifiers & Qt.ShiftModifier) && root.hasSelection)
+                            root.selectBlock(root.anchorRow, 0, row, last)
+                        else {
+                            root.selectBlock(row, 0, row, last)
+                            root.selectedRow = row
+                        }
+                    }
+                }
             }
         }
 
@@ -163,6 +262,11 @@ Item {
             rowHeightProvider: () => 30
             ScrollBar.vertical: ScrollBar { }
             ScrollBar.horizontal: ScrollBar { }
+            Keys.onPressed: function (e) {
+                if (e.matches(StandardKey.Copy) && root.hasSelection) { root.copySelection("tsv", false); e.accepted = true }
+                else if (e.matches(StandardKey.SelectAll)) { root.selectAll(); e.accepted = true }
+                else if (e.key === Qt.Key_Escape && root.hasSelection) { root.clearSelection(); e.accepted = true }
+            }
 
             delegate: Rectangle {
                 id: cellBox
@@ -183,6 +287,17 @@ Item {
                     width: 3; height: parent.height
                     color: Theme.warning
                 }
+                Rectangle {          // part of the selected block
+                    anchors.fill: parent
+                    visible: root.selectedCells > 1 && root.inSelection(row, column)
+                    color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
+                }
+                Rectangle {          // the one selected cell
+                    anchors.fill: parent
+                    visible: root.selectedCells === 1 && root.inSelection(row, column) && !cellBox.editing
+                    color: "transparent"
+                    border.width: 2; border.color: Theme.accent
+                }
                 Text {
                     visible: !cellBox.editing
                     anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
@@ -199,14 +314,33 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    onClicked: function (mouse) {
+                    onPressed: function (mouse) {
+                        grid.forceActiveFocus()
                         if (mouse.button === Qt.RightButton) {
                             root.menuRow = row; root.menuColumn = column
-                            root.selectedRow = row
+                            if (!root.inSelection(row, column)) { root.selectBlock(row, column, row, column); root.selectedRow = row }
                             cellMenu.popup()
                             return
                         }
-                        root.selectedRow = (root.selectedRow === row ? -1 : row)
+                        if ((mouse.modifiers & Qt.ShiftModifier) && root.hasSelection) {
+                            root.endRow = row; root.endColumn = column
+                            return
+                        }
+                        // Clicking the one selected cell again lets go of it (and the inspector).
+                        if (root.selectedCells === 1 && root.inSelection(row, column)) {
+                            root.clearSelection()
+                            root.selectedRow = -1
+                            return
+                        }
+                        root.selectBlock(row, column, row, column)
+                        root.selectedRow = row
+                    }
+                    // Dragging stretches the block.
+                    onPositionChanged: function (mouse) {
+                        if (!pressed || !(pressedButtons & Qt.LeftButton) || !root.hasSelection) return
+                        const p = mapToItem(grid.contentItem, mouse.x, mouse.y)
+                        const cell = root.cellAt(p.x, p.y)
+                        root.endRow = cell.row; root.endColumn = cell.column
                     }
                     onDoubleClicked: root.startEdit(row, column)
                 }
@@ -356,13 +490,46 @@ Item {
             onTriggered: root.deleteToggled(root.menuRow)
         }
         ContextMenuSeparator { }
-        ContextMenuItem {
-            text: "Copy value"
-            onTriggered: {
-                const v = root.valuesForRow ? root.valuesForRow(root.menuRow)[root.columns[root.menuColumn].name] : null
-                clipboard.text = v === null || v === undefined ? "NULL" : String(v)
-                clipboard.selectAll(); clipboard.copy()
+        ContextMenuItem { text: root.selectedCells > 1 ? "Copy   ⌘C" : "Copy value   ⌘C"; onTriggered: root.copySelection("tsv", false) }
+        ContextMenuItem { text: "Copy with column names"; onTriggered: root.copySelection("tsv", true) }
+        ContextMenuItem { text: "Copy as CSV"; onTriggered: root.copySelection("csv", true) }
+        ContextMenuSeparator { }
+        ContextMenuItem { text: "Select all   ⌘A"; onTriggered: root.selectAll() }
+    }
+
+    // ---- Under the grid: what's selected, summed up ----
+    Item {
+        id: selectionBar
+        anchors { left: frame.left; right: frame.right; bottom: parent.bottom }
+        height: 24
+        visible: root.selectedCells > 1 || root.copiedNote.length > 0
+        Text {
+            anchors { left: parent.left; leftMargin: 4; right: hint.left; rightMargin: 12; verticalCenter: parent.verticalCenter }
+            elide: Text.ElideRight
+            color: root.copiedNote.length ? Theme.positive : Theme.textSecondary
+            font.pixelSize: Theme.fontSmall + 1
+            text: {
+                if (root.copiedNote.length) return root.copiedNote
+                const s = root.summary
+                if (!s || !s.cells) return root.fmt(root.selectedCells) + " cells"
+                if (s.tooMany) return root.fmt(s.cells) + " cells — too many to add up"
+                let parts = [root.fmt(s.cells) + " cells"]
+                if (s.numbers > 0) {
+                    parts.push("Sum " + root.num(s.sum), "Avg " + root.num(s.avg),
+                               "Min " + root.num(s.min), "Max " + root.num(s.max))
+                    if (s.numbers < s.values) parts.push(root.fmt(s.numbers) + " numbers")
+                }
+                if (s.nulls > 0) parts.push(root.fmt(s.nulls) + " NULL")
+                return parts.join("   ·   ")
             }
+        }
+        Text {
+            id: hint
+            anchors { right: parent.right; rightMargin: 4; verticalCenter: parent.verticalCenter }
+            visible: !root.copiedNote.length
+            text: "⌘C copies · right-click for more"
+            color: Theme.textTertiary
+            font.pixelSize: Theme.fontSmall
         }
     }
     TextEdit { id: clipboard; visible: false }

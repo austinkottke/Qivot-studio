@@ -2,6 +2,7 @@
 #include "codegen.h"
 #include "sampledatabase.h"
 #include "diagramdata.h"
+#include "sshtunnel.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -73,6 +74,70 @@ static QString serverHost(const QString &driver, const QString &host)
     if (driver == QLatin1String("QMYSQL") && host.trimmed().compare(QLatin1String("localhost"), Qt::CaseInsensitive) == 0)
         return QStringLiteral("127.0.0.1");
     return host;
+}
+
+// A value for a libpq connect option, quoted so a path with spaces stays whole.
+static QString pgValue(QString v)
+{
+    v.replace(QLatin1Char('\\'), QLatin1String("\\\\")).replace(QLatin1Char('\''), QLatin1String("\\'"));
+    return QLatin1Char('\'') + v + QLatin1Char('\'');
+}
+
+// Host, port, login and TLS: set up the same way for the reading connection
+// and the writing one. `ssl` is `{ mode, ca, cert, key, trust }` (see connectTo).
+static void setUpServer(QSqlDatabase &db, const QString &driver, const QVariantMap &settings,
+                        const QString &host, int port, const QString &password, bool reading)
+{
+    const QString database = settings.value(QStringLiteral("database")).toString().trimmed();
+    const QString user = settings.value(QStringLiteral("user")).toString().trimmed();
+    const QVariantMap ssl = settings.value(QStringLiteral("ssl")).toMap();
+    const QString mode = ssl.value(QStringLiteral("mode")).toString();
+    const QString ca = ssl.value(QStringLiteral("ca")).toString().trimmed();
+    const QString cert = ssl.value(QStringLiteral("cert")).toString().trimmed();
+    const QString key = ssl.value(QStringLiteral("key")).toString().trimmed();
+
+    if (driver == QLatin1String("QODBC")) {
+        // ODBC takes everything as one connection string. {braces} quote values
+        // so a ';' in a password can't be read as the next setting.
+        auto braced = [](QString v) { return QLatin1Char('{') + v.replace(QLatin1Char('}'), QLatin1String("}}")) + QLatin1Char('}'); };
+        const QString odbcDriver = settings.value(QStringLiteral("odbcDriver"),
+                                                  QStringLiteral("ODBC Driver 18 for SQL Server")).toString();
+        // Encrypt: "off", "on" (the driver's default) or "strict"; the certificate
+        // is trusted as it is unless asked not to (local servers are self-signed).
+        const QString encrypt = mode == QLatin1String("off") ? QStringLiteral("no")
+                              : mode == QLatin1String("strict") ? QStringLiteral("strict") : QStringLiteral("yes");
+        const bool trust = ssl.value(QStringLiteral("trust"), true).toBool() && mode != QLatin1String("strict");
+        db.setDatabaseName(QStringLiteral("Driver={%1};Server=%2,%3;Database=%4;Uid=%5;Pwd=%6;Encrypt=%7;TrustServerCertificate=%8;%9")
+                               .arg(odbcDriver, host).arg(port)
+                               .arg(braced(database), braced(user), braced(password), encrypt,
+                                    trust ? QStringLiteral("yes") : QStringLiteral("no"),
+                                    reading ? QStringLiteral("ApplicationIntent=ReadOnly;") : QString()));
+        return;
+    }
+    db.setHostName(serverHost(driver, host));
+    db.setPort(port);
+    db.setDatabaseName(database);
+    db.setUserName(user);
+    db.setPassword(password);
+    QStringList options;
+    if (driver == QLatin1String("QPSQL")) {
+        options << QStringLiteral("connect_timeout=8");
+        static const QStringList modes = { "disable", "allow", "prefer", "require", "verify-ca", "verify-full" };
+        if (modes.contains(mode))
+            options << QStringLiteral("sslmode=") + mode;
+        if (!ca.isEmpty())   options << QStringLiteral("sslrootcert=") + pgValue(ca);
+        if (!cert.isEmpty()) options << QStringLiteral("sslcert=") + pgValue(cert);
+        if (!key.isEmpty())  options << QStringLiteral("sslkey=") + pgValue(key);
+    } else {
+        // MySQL's drivers turn TLS on when given a certificate to check the server with.
+        options << QStringLiteral("MYSQL_OPT_CONNECT_TIMEOUT=8");
+        if (mode != QLatin1String("off")) {
+            if (!ca.isEmpty())   options << QStringLiteral("SSL_CA=") + ca;
+            if (!cert.isEmpty()) options << QStringLiteral("SSL_CERT=") + cert;
+            if (!key.isEmpty())  options << QStringLiteral("SSL_KEY=") + key;
+        }
+    }
+    db.setConnectOptions(options.join(QLatin1Char(';')));
 }
 
 QVariantMap DatabaseSession::availableTypes() const
@@ -200,25 +265,29 @@ bool DatabaseSession::connectTo(const QVariantMap &settings)
     }
 
     close();
-    QSqlDatabase db = QSqlDatabase::addDatabase(driver, m_connection);
-    if (driver == QLatin1String("QODBC")) {
-        // ODBC takes everything as one connection string. {braces} quote values
-        // so a ';' in a password can't be read as the next setting.
-        auto braced = [](QString v) { return QLatin1Char('{') + v.replace(QLatin1Char('}'), QLatin1String("}}")) + QLatin1Char('}'); };
-        const QString odbcDriver = settings.value(QStringLiteral("odbcDriver"),
-                                                  QStringLiteral("ODBC Driver 18 for SQL Server")).toString();
-        db.setDatabaseName(QStringLiteral("Driver={%1};Server=%2,%3;Database=%4;Uid=%5;Pwd=%6;"
-                                          "TrustServerCertificate=yes;ApplicationIntent=ReadOnly;")
-                               .arg(odbcDriver, host).arg(port).arg(braced(database), braced(user), braced(password)));
-    } else {
-        db.setHostName(serverHost(driver, host));
-        db.setPort(port);
-        db.setDatabaseName(database);
-        db.setUserName(user);
-        db.setPassword(password);
-        db.setConnectOptions(driver == QLatin1String("QPSQL") ? QStringLiteral("connect_timeout=8")
-                                                              : QStringLiteral("MYSQL_OPT_CONNECT_TIMEOUT=8"));
+    // Through SSH: the database is then reached at a local port the tunnel forwards.
+    const QVariantMap ssh = settings.value(QStringLiteral("ssh")).toMap();
+    QString host2 = host;
+    int port2 = port;
+    if (!ssh.value(QStringLiteral("host")).toString().trimmed().isEmpty()) {
+        m_tunnel = std::make_unique<SshTunnel>();
+        SshTunnel::Options o;
+        o.host = ssh.value(QStringLiteral("host")).toString().trimmed();
+        o.port = ssh.value(QStringLiteral("port"), 22).toInt();
+        o.user = ssh.value(QStringLiteral("user")).toString().trimmed();
+        o.keyFile = ssh.value(QStringLiteral("key")).toString().trimmed();
+        o.targetHost = host;
+        o.targetPort = port;
+        if (!m_tunnel->start(o)) {
+            setError(tr("Couldn't open the SSH tunnel through %1 — %2").arg(o.host, m_tunnel->error()));
+            m_tunnel.reset();
+            return false;
+        }
+        host2 = QStringLiteral("127.0.0.1");
+        port2 = m_tunnel->localPort();
     }
+    QSqlDatabase db = QSqlDatabase::addDatabase(driver, m_connection);
+    setUpServer(db, driver, settings, host2, port2, password, /*reading=*/true);
     if (!db.open()) {
         QString why = db.lastError().text().trimmed();
         if (why.isEmpty())
@@ -226,25 +295,27 @@ bool DatabaseSession::connectTo(const QVariantMap &settings)
         setError(tr("Couldn't connect to %1 at %2:%3 — %4").arg(label, host).arg(port).arg(why));
         db = QSqlDatabase();
         discard();
+        m_tunnel.reset();
         return false;
     }
 
     // Make the session itself read-only where the database can, so even a bug
     // in Studio couldn't change anything. SQL Server has no such session switch.
-    bool readOnly = false;
-    {
-        QSqlQuery q(db);
-        if (driver == QLatin1String("QPSQL"))
-            readOnly = q.exec(QStringLiteral("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"));
-        else if (driver != QLatin1String("QODBC"))
-            readOnly = q.exec(QStringLiteral("SET SESSION TRANSACTION READ ONLY"));
-    }
+    const bool readOnly = makeReadOnly(db);
 
     m_displayName = database;
     m_location = host + QLatin1Char(':') + QString::number(port);
+    if (m_tunnel)
+        m_location += tr(" via %1").arg(ssh.value(QStringLiteral("host")).toString().trimmed());
     m_settings = { { QStringLiteral("type"), type }, { QStringLiteral("driver"), driver },
                    { QStringLiteral("host"), host }, { QStringLiteral("port"), port },
                    { QStringLiteral("database"), database }, { QStringLiteral("user"), user } };
+    if (!settings.value(QStringLiteral("ssl")).toMap().isEmpty())
+        m_settings.insert(QStringLiteral("ssl"), settings.value(QStringLiteral("ssl")));
+    if (m_tunnel)
+        m_settings.insert(QStringLiteral("ssh"), ssh);
+    m_serverHost = host2;
+    m_serverPort = port2;
     m_password = password;
     if (driver == QLatin1String("QODBC"))
         m_settings.insert(QStringLiteral("odbcDriver"),
@@ -256,6 +327,37 @@ bool DatabaseSession::connectTo(const QVariantMap &settings)
         return false;
     }
     return true;
+}
+
+bool DatabaseSession::makeReadOnly(QSqlDatabase &db)
+{
+    QSqlQuery q(db);
+    const QString driver = db.driverName();
+    if (driver == QLatin1String("QPSQL"))
+        return q.exec(QStringLiteral("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"));
+    if (driver == QLatin1String("QMYSQL") || driver == QLatin1String("QMARIADB"))
+        return q.exec(QStringLiteral("SET SESSION TRANSACTION READ ONLY"));
+    return false;
+}
+
+QSqlDatabase DatabaseSession::openReadOnlyClone(const QString &connection, const QString &name, QString *error)
+{
+    // This overload of cloneDatabase is the one that's safe from another thread.
+    QSqlDatabase db = QSqlDatabase::cloneDatabase(connection, name);
+    if (!db.isValid()) {
+        if (error)
+            *error = tr("The database was closed.");
+        return db;
+    }
+    // An SQLite clone keeps QSQLITE_OPEN_READONLY from the connect options;
+    // a server session has to be told again.
+    if (!db.open()) {
+        if (error)
+            *error = db.lastError().text().trimmed();
+        return db;
+    }
+    makeReadOnly(db);
+    return db;
 }
 
 QVariantList DatabaseSession::samples() const
@@ -331,25 +433,11 @@ bool DatabaseSession::allowChanges(bool on)
         db.setDatabaseName(m_path);
         db.setConnectOptions(QStringLiteral("QSQLITE_BUSY_TIMEOUT=5000"));   // wait out a read in progress
     } else {
-        // The same server and login as the reading connection, without the read-only parts.
+        // The same server (through the same tunnel), login and TLS as the reading
+        // connection, without the read-only parts.
         const QString driver = m_settings.value(QStringLiteral("driver")).toString();
         db = QSqlDatabase::addDatabase(driver, writeConnectionName());
-        const QString host = m_settings.value(QStringLiteral("host")).toString();
-        const int port = m_settings.value(QStringLiteral("port")).toInt();
-        const QString database = m_settings.value(QStringLiteral("database")).toString();
-        const QString user = m_settings.value(QStringLiteral("user")).toString();
-        if (driver == QLatin1String("QODBC")) {
-            auto braced = [](QString v) { return QLatin1Char('{') + v.replace(QLatin1Char('}'), QLatin1String("}}")) + QLatin1Char('}'); };
-            db.setDatabaseName(QStringLiteral("Driver={%1};Server=%2,%3;Database=%4;Uid=%5;Pwd=%6;TrustServerCertificate=yes;")
-                                   .arg(m_settings.value(QStringLiteral("odbcDriver")).toString(), host).arg(port)
-                                   .arg(braced(database), braced(user), braced(m_password)));
-        } else {
-            db.setHostName(serverHost(driver, host));
-            db.setPort(port);
-            db.setDatabaseName(database);
-            db.setUserName(user);
-            db.setPassword(m_password);
-        }
+        setUpServer(db, driver, m_settings, m_serverHost, m_serverPort, m_password, /*reading=*/false);
     }
     if (!db.open()) {
         setError(tr("Couldn't open %1 for changes: %2").arg(m_displayName, db.lastError().text()));
@@ -418,6 +506,9 @@ void DatabaseSession::close()
     m_displayName.clear();
     m_settings.clear();
     m_password.clear();
+    m_tunnel.reset();
+    m_serverHost.clear();
+    m_serverPort = 0;
     if (wasOpen)
         emit openChanged();
 }

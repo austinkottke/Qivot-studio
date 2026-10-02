@@ -38,6 +38,7 @@ ApplicationWindow {
     property string startupFind: ""          // from --find
     property int startupRow: -1              // from --select-row
     property bool screenshotMode: false      // --shot: ignore the real pointer
+    property bool rememberConnections: true  // off for screenshots and tests: they don't add to Recent
 
     property string view: "diagram"            // "diagram", "query", or "table"
     property string selectedTable: ""
@@ -47,6 +48,9 @@ ApplicationWindow {
         id: db
         onOpenChanged: {
             if (isOpen && win.startupAllowChanges) { win.startupAllowChanges = false; allowChanges(true) }
+            // Recent, for the welcome screen (a sample says it's one just after opening).
+            if (isOpen && !refreshing && win.rememberConnections)
+                Qt.callLater(function () { if (db.isOpen && !db.sampleId.length) ConnectionHistory.remember(db.connectionSettings) })
             // A refresh after a change: stay where we are.
             if (refreshing) {
                 if (win.selectedTable.length && table(win.selectedTable).name === undefined)
@@ -84,6 +88,57 @@ ApplicationWindow {
 
     ConnectDialog { id: connectDialog; database: db }
 
+    // ---- Copy any text: right-click it ----
+    // Labels, names, types, errors and figures are plain text all over the app;
+    // a right-click on one (where nothing else has a menu) offers to copy it,
+    // in full even when it's shown cut short.
+    property var copyTarget: null
+    function isText(item) {
+        return item && typeof item.text === "string" && item.text.length > 0 && item.font !== undefined
+               && item.visible && item.opacity > 0
+    }
+    // The topmost visible text under (x, y), in `item`'s coordinates.
+    function textAt(item, x, y) {
+        const kids = item.children
+        for (let i = kids.length - 1; i >= 0; --i) {
+            const c = kids[i]
+            if (!c.visible || c.opacity === 0 || c.width <= 0 || c.height <= 0) continue
+            const p = item.mapToItem(c, x, y)
+            if (p.x < 0 || p.y < 0 || p.x >= c.width || p.y >= c.height) continue
+            const inner = textAt(c, p.x, p.y)
+            if (inner) return inner
+            if (isText(c)) return c
+        }
+        return null
+    }
+    function copyText(text) {
+        clipboardHelper.text = text
+        clipboardHelper.selectAll()
+        clipboardHelper.copy()
+    }
+    TextEdit { id: clipboardHelper; visible: false }
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: {
+            const p = point.position
+            const t = win.textAt(win.contentItem, p.x, p.y)
+            if (!t) return
+            win.copyTarget = t
+            copyMenu.popup()
+        }
+    }
+    ContextMenu {
+        id: copyMenu
+        readonly property string full: win.copyTarget ? String(win.copyTarget.text) : ""
+        readonly property string selected: win.copyTarget && win.copyTarget.selectedText ? win.copyTarget.selectedText : ""
+        ContextMenuItem {
+            text: copyMenu.selected.length ? "Copy selection"
+                  : "Copy “" + (copyMenu.full.length > 40 ? copyMenu.full.slice(0, 38).replace(/\s+/g, " ") + "…"
+                                                          : copyMenu.full.replace(/\s+/g, " ")) + "”"
+            onTriggered: win.copyText(copyMenu.selected.length ? copyMenu.selected : copyMenu.full)
+        }
+    }
+
     // Changes need the user's say-so: requestChanges(then) asks once, then runs `then`.
     AllowChangesDialog {
         id: allowDialog
@@ -111,6 +166,11 @@ ApplicationWindow {
         onSamplesRequested: win.browsingSamples = true
         onConnectRequested: connectDialog.open()
         onFileDropped: (url) => db.open(url)
+        // A file opens; a server needs its password (never kept), so the dialog asks.
+        onRecentOpened: (entry) => {
+            if (entry.kind === "file") db.open(entry.settings.path)
+            else connectDialog.openWith(entry.settings)
+        }
     }
 
     Loader {

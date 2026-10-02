@@ -46,33 +46,55 @@
 
 <table>
   <tr>
-    <td width="560"><a href="docs/studio-editing.png"><img src="docs/feature-editing.png" width="560" alt="Editing the publisher table: an edited cell, a value set to NULL, a deleted row and a new one, with the unsaved changes ready to review as SQL and save"></a></td>
+    <td width="560"><a href="docs/studio-selection.png"><img src="docs/feature-selection.png" width="560" alt="Sixteen cells of the price and pages columns selected, with their count, sum, average, min and max in the bar below"></a></td>
+    <td width="280">
+      <sub><b>SELECTION</b></sub>
+      <h3>Select it, add it up,<br>copy it</h3>
+      <p>Drag across cells, Shift-click,<br>or take whole rows: the bar adds<br>them up (count, sum, average,<br>min, max), and ⌘C copies them as<br>tab-separated text that pastes<br>straight into a spreadsheet.</p>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
     <td width="280">
       <sub><b>EDITING</b></sub>
       <h3>Change rows, then undo</h3>
       <p>Edit cells, add and delete rows,<br>set NULLs. Every change is<br>marked in the grid and shown as<br>SQL before it runs; save in one<br>transaction, and undo the save<br>if you need to.</p>
     </td>
+    <td width="560"><a href="docs/studio-editing.png"><img src="docs/feature-editing.png" width="560" alt="Editing the publisher table: an edited cell, a value set to NULL, a deleted row and a new one, with the unsaved changes ready to review as SQL and save"></a></td>
   </tr>
 </table>
 
 <table>
   <tr>
+    <td width="560"><a href="docs/studio-profile.png"><img src="docs/feature-profile.png" width="560" alt="The book table's column profiles: how full each column is, distinct values, ranges, histograms and the commonest values"></a></td>
     <td width="280">
       <sub><b>PROFILE</b></sub>
       <h3>The shape of every<br>column</h3>
       <p>How full each column is, how<br>many distinct values, the range,<br>and a histogram or the commonest<br>values, profiled in the<br>background.</p>
     </td>
-    <td width="560"><a href="docs/studio-profile.png"><img src="docs/feature-profile.png" width="560" alt="The book table's column profiles: how full each column is, distinct values, ranges, histograms and the commonest values"></a></td>
   </tr>
 </table>
 
 <table>
   <tr>
-    <td width="560"><a href="docs/studio-query.png"><img src="docs/feature-query.png" width="560" alt="The SQL console running a top-artists-by-revenue query, with syntax highlighting"></a></td>
     <td width="280">
       <sub><b>SQL CONSOLE</b></sub>
       <h3>Read-only on every<br>database</h3>
       <p>Syntax highlighting and<br>autocomplete that knows the<br>query: tables after FROM,<br>columns after<br><code>alias.</code>. History and<br>saved queries per database.</p>
+    </td>
+    <td width="560"><a href="docs/studio-query.png"><img src="docs/feature-query.png" width="560" alt="The SQL console running a top-artists-by-revenue query, with syntax highlighting"></a></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="560"><a href="docs/studio-running.png"><img src="docs/feature-running.png" width="560" alt="A long query running in a tab, with its time so far and the Stop button"></a></td>
+    <td width="280">
+      <sub><b>RUNNING</b></sub>
+      <h3>Slow queries don't<br>freeze anything</h3>
+      <p>Queries run in the background,<br>each in its own tab. Stop (⌘.)<br>asks the server to cancel:<br><code>pg_cancel_backend</code>,<br><code>KILL QUERY</code> or<br><code>KILL</code>.</p>
     </td>
   </tr>
 </table>
@@ -107,6 +129,28 @@
       <p>Declared types, NOT NULL,<br>defaults and key badges; the<br>foreign keys a table holds and<br>the tables that reference it,<br>one click to jump there; every<br>index.</p>
     </td>
     <td width="560"><a href="docs/studio-structure.png"><img src="docs/feature-structure.png" width="560" alt="The structure of the Track table: columns with key badges, foreign keys, the tables that reference it, and indexes"></a></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="560"><a href="docs/studio-recent.png"><img src="docs/feature-recent.png" width="560" alt="The welcome screen listing saved connections, starred, and recent files and servers"></a></td>
+    <td width="280">
+      <sub><b>CONNECTIONS</b></sub>
+      <h3>Saved and recent</h3>
+      <p>Files open with a click; servers<br>fill in the Connect dialog,<br>ready for the password. Star the<br>ones to keep. Passwords are<br>never stored.</p>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="280">
+      <sub><b>SSL AND SSH</b></sub>
+      <h3>Through a tunnel,<br>encrypted</h3>
+      <p>An SSH tunnel through your own<br>ssh and key, and each database's<br>TLS settings: PostgreSQL's<br>sslmode and certificates,<br>MySQL's CA, SQL Server's<br>Encrypt.</p>
+    </td>
+    <td width="560"><a href="docs/studio-connect.png"><img src="docs/feature-connect.png" width="560" alt="The Connect dialog with TLS set to Verify full and a CA file, and an SSH tunnel through a bastion server"></a></td>
   </tr>
 </table>
 
@@ -163,8 +207,14 @@ into Qivot C++ that you can build, test and run without leaving Studio.
 
 ### Analyze
 
-- **SQLite files, or a server**: PostgreSQL, MySQL / MariaDB and SQL Server.
-  Tables in other schemas are listed as `schema.table`.
+- **SQLite files, or a server**: PostgreSQL, MySQL / MariaDB and SQL Server,
+  directly or **through an SSH tunnel**, with each one's **TLS** settings
+  (PostgreSQL's `sslmode` and certificates, MySQL's CA and client
+  certificates, SQL Server's Encrypt / Strict). Tables in other schemas are
+  listed as `schema.table`.
+- **Saved and recent connections** on the welcome screen: files open with a
+  click, servers fill in the Connect dialog. Star one to keep it. Passwords
+  are never stored.
 - **A bird's-eye ER diagram** of the whole database: every table as a card,
   every foreign key as a line from its column to the column it references, with
   crow's-foot notation. Laid out automatically along the relationships, with
@@ -184,6 +234,10 @@ into Qivot C++ that you can build, test and run without leaving Studio.
   filtering run in SQL and only the rows on screen are fetched, so a table of
   millions scrolls as smoothly as one of hundreds. Click a row to see every
   value in full.
+- **Select a block of cells** (drag, Shift-click, a row number for the row,
+  ⌘A for everything) in any grid: the bar underneath adds it up (count, sum,
+  average, min, max), and ⌘C copies it as tab-separated text that pastes
+  straight into a spreadsheet; or with the column names, or as CSV.
 - **Column profiles**: for every column, how much is filled, how many distinct
   values, the range, and its shape: a histogram for numbers, the commonest
   values otherwise. Profiled in the background, so big tables don't hold up
@@ -192,11 +246,15 @@ into Qivot C++ that you can build, test and run without leaving Studio.
   keys, pick columns (counted, summed, averaged...), filter and sort. The SQL,
   in the database's own dialect, and the same query as Qivot C++ follow every
   change, and the result refreshes as you go.
-- **A SQL console**: syntax highlighting and **autocomplete** that knows the
-  query (tables after `FROM`, a table's columns after `alias.`), ⌘↩ to run,
-  and **Explain** (⇧⌘↩) to see how the database would run it, without running
-  it: a tree of steps, estimated rows and cost, with every full table scan
-  flagged. On SQLite, PostgreSQL, MySQL and SQL Server.
+- **A SQL console** with **tabs** (⌘T, ⌘W; kept per database): syntax
+  highlighting and **autocomplete** that knows the query (tables after `FROM`,
+  a table's columns after `alias.`), ⌘↩ to run, and **Explain** (⇧⌘↩) to see
+  how the database would run it, without running it: a tree of steps,
+  estimated rows and cost, with every full table scan flagged. On SQLite,
+  PostgreSQL, MySQL and SQL Server.
+- **Queries run in the background**, on a connection of their own, so a slow
+  one never freezes the window; **Stop** (⌘.) asks the server to cancel it
+  (`pg_cancel_backend`, `KILL QUERY`, `KILL`).
 - **History and saved queries**, per database: every run with its rows and
   time, failures included; save one by name (⌘S), find it again, double-click
   to run.
@@ -325,7 +383,7 @@ ctest --test-dir qivot-studio/build --output-on-failure
 | `--export-diagram <file>` | save the diagram as `.png`, `.svg` or `.pdf` once it's laid out |
 | `--view query --query "…" --explain` | show a query's plan instead of running it |
 | `--dark`, `--light` | force the colour scheme |
-| `--size 1440x900`, `--find <table>`, `--select-row <n>`, `--design-demo`, `--design-tab sql`, `--builder-demo`, `--edit-demo`, `--complete-demo`, `--build`, `--wheel <notches>`, `--wheel-pixels <dx,dy>` | for screenshots, demos and tests |
+| `--size 1440x900`, `--find <table>`, `--select-row <n>`, `--select-cells <t,l,b,r>`, `--design-demo`, `--design-tab sql`, `--builder-demo`, `--edit-demo`, `--complete-demo`, `--build`, `--wheel <notches>`, `--wheel-pixels <dx,dy>` | for screenshots, demos and tests |
 | `--shot <png>` | save a screenshot and quit |
 | `--smoke` | load and quit; exit 1 if any QML warning was logged (used by CI) |
 
@@ -342,11 +400,20 @@ library on the computer:
 
 The connect dialog says when a driver is missing rather than failing obscurely.
 
+**SSL and SSH** are under *SSL and SSH* in the Connect dialog. An SSH tunnel
+uses the computer's own `ssh` (OpenSSH, built into macOS, Linux and Windows
+10+), signing in with a key file or ssh-agent; a key with a passphrase needs to
+be in the agent. A server seen for the first time is added to `known_hosts`;
+one whose key has changed is refused. The database's host and port are as the
+SSH server sees them.
+
 `tests/tst_servers.cpp` runs Studio against real servers holding the public
 [Pagila](https://github.com/devrimgunduz/pagila), [Sakila and Employees](https://dev.mysql.com/doc/index-other.html)
 and [Chinook](https://github.com/lerocha/chinook-database) sample databases; each
 test is skipped unless its `STUDIO_TEST_PG` / `STUDIO_TEST_MYSQL` /
-`STUDIO_TEST_MSSQL` variable points at a server.
+`STUDIO_TEST_MSSQL` variable points at a server. The SSH test also needs
+`STUDIO_TEST_SSH` (an SSH server that can reach the PostgreSQL one, as
+`host:port`) and `STUDIO_TEST_SSH_KEY`.
 
 ## Layout
 

@@ -19,6 +19,10 @@ CROPS = {  # name: (left, top, right, bottom) in the screenshot's pixels
     "migration": (311, 117, 1333, 914),
     "cpp":       (321, 117, 1333, 584),
     "ide":       (311, 117, 1333, 778),
+    "selection": (288, 270, 1040, 952),
+    "running":   (290, 0, 1004, 330),
+    "recent":    (330, 370, 1080, 800),
+    "connect":   (468, 318, 932, 1012),
 }
 # Crops that end partway through rows fade out at the bottom instead.
 FADE = {"data", "profile", "structure", "compare", "query", "migration"}

@@ -27,6 +27,7 @@ set(STUDIO_QML_FILES
     qml/DataFileDialog.qml
     qml/QueryBuilderView.qml
     qml/ProfileView.qml
+    qml/SqlTab.qml
 )
 
 # The icon (tools/make-icon.py): .icns in the macOS bundle, .ico in the Windows

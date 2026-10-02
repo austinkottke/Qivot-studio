@@ -3,9 +3,10 @@ import QtQuick.Controls 2.15
 import QivotUI 1.0
 import QivotStudio.Core 1.0
 
-/// Query: build one by pointing (QueryBuilderView), or write SQL and ⌘↩ to
-/// run it; either way the result is in the grid. Read-only on every database
-/// (see QueryModel), so it's safe to explore with.
+/// Query: build one by pointing (QueryBuilderView), or write SQL in tabs and
+/// ⌘↩ to run it; either way the result is in the grid. Read-only on every
+/// database (see QueryModel), so it's safe to explore with. Queries run in the
+/// background: the window stays usable, and Stop (⌘.) ends one.
 Item {
     id: root
     property var database
@@ -19,26 +20,80 @@ Item {
     property string mode: initialQuery.length ? "sql" : startMode.length ? startMode : Prefs.value("query/mode", "builder")
     onModeChanged: Prefs.setValue("query/mode", mode)
 
-    function currentSql() { return editor.selectedText.length ? editor.selectedText : editor.text }
+    // ---- Tabs: each its own editor and result; kept per database ----
+    ListModel { id: tabsModel }                  // { uid, title }
+    property int currentTab: 0
+    property int nextUid: 1
+    readonly property var current: tabRepeater.count > currentTab ? tabRepeater.itemAt(currentTab) : null
+    // Command-line demos and screenshots don't overwrite the tabs someone has open.
+    readonly property bool persistTabs: !initialQuery.length && !completeDemo
+    function tabsKey() { return "query/tabs/" + Qt.md5(library.scope) }
+
+    function newTab(sql, title) {
+        const uid = nextUid++
+        tabsModel.append({ uid: uid, title: title || "" })
+        currentTab = tabsModel.count - 1
+        const item = tabRepeater.itemAt(currentTab)
+        if (item) { item.setText(sql || ""); Qt.callLater(item.focusEditor) }
+        saveTabs.restart()
+        return item
+    }
+    function closeTab(i) {
+        if (tabsModel.count <= 1) { const only = tabRepeater.itemAt(0); if (only) { only.setText(""); only.clearResults() } return }
+        const t = tabRepeater.itemAt(i)
+        if (t) t.stop()
+        tabsModel.remove(i)
+        if (currentTab >= tabsModel.count) currentTab = tabsModel.count - 1
+        else if (i < currentTab) currentTab--
+        saveTabs.restart()
+    }
+    function tabTitle(i) {
+        const t = tabsModel.get(i)
+        return t && t.title.length ? t.title : "Query " + (i + 1)
+    }
+    // The tabs as they were for this database, or one with a first query.
+    function restoreTabs() {
+        tabsModel.clear()
+        currentTab = 0
+        let saved = null
+        if (persistTabs && library.scope.length) {
+            try { saved = JSON.parse(Prefs.value(tabsKey(), "")) } catch (e) { saved = null }
+        }
+        const list = saved && saved.tabs && saved.tabs.length ? saved.tabs : [{ title: "", sql: initialQuery.length ? initialQuery : starter() }]
+        for (let i = 0; i < list.length; ++i) {
+            tabsModel.append({ uid: nextUid++, title: list[i].title || "" })
+            const item = tabRepeater.itemAt(i)
+            if (item) item.setText(list[i].sql || "")
+        }
+        currentTab = saved ? Math.max(0, Math.min(tabsModel.count - 1, saved.current || 0)) : 0
+    }
+    Timer {
+        id: saveTabs
+        interval: 600
+        onTriggered: {
+            if (!root.persistTabs || !library.scope.length) return
+            const tabs = []
+            for (let i = 0; i < tabsModel.count; ++i) {
+                const item = tabRepeater.itemAt(i)
+                tabs.push({ title: tabsModel.get(i).title, sql: item ? item.text : "" })
+            }
+            Prefs.setValue(root.tabsKey(), JSON.stringify({ tabs: tabs, current: root.currentTab }))
+        }
+    }
+    onCurrentTabChanged: { historyIndex = -1; saveTabs.restart() }
+
+    function currentSql() { return current ? current.currentSql() : "" }
     function run() {
         if (mode === "builder") { builderView.run(); return }
-        const sql = currentSql()
-        if (!sql.trim().length) return
-        completionPopup.close()
-        query.run(sql)
-        library.record(sql.trim(), query.hasResult ? query.resultRows : Math.max(0, query.rowsAffected),
-                       query.elapsedMs, !query.error.length, query.error)
+        if (current) current.run()
         historyIndex = -1
-        resultsTab = "results"
     }
-    // How the database would run it (without running it).
-    function explain() {
-        const sql = currentSql()
-        if (!sql.trim().length) return
-        completionPopup.close()
-        plan.explain(sql)
-        resultsTab = "plan"
+    function stop() {
+        if (mode === "builder") builderResult.cancel()
+        else if (current) current.stop()
     }
+    function explain() { if (current) current.explain() }
+    readonly property bool running: mode === "builder" ? builderResult.running : (current ? current.running : false)
 
     // A first query that works on whatever is open.
     function starter() {
@@ -50,22 +105,14 @@ Item {
         target: root.database
         function onOpenChanged() {
             if (root.database.refreshing) return
-            editor.text = root.starter()
             historyIndex = -1
-            plan.clear()
-            root.resultsTab = "results"
+            root.restoreTabs()
         }
     }
     Component.onCompleted: {
-        editor.text = initialQuery.length ? initialQuery : starter()
+        restoreTabs()
         if (runInitialQuery && initialQuery.length) Qt.callLater(explainInitialQuery ? explain : run)
-        if (completeDemo) Qt.callLater(function () {
-            mode = "sql"
-            editor.text = "SELECT b.title, a.\nFROM book b\nJOIN author a ON a.id = b.author_id"
-            editor.forceActiveFocus()
-            editor.cursorPosition = 18
-            updateCompletion(false)
-        })
+        if (completeDemo) Qt.callLater(function () { mode = "sql"; if (current) current.completeDemo() })
     }
 
     // ---- History and saved queries, per database (QueryLibrary) ----
@@ -76,48 +123,29 @@ Item {
                                                                              : root.database.location + "/" + root.database.displayName)
                : ""
     }
+    readonly property alias queryLibrary: library
     readonly property var okHistory: library.history.filter(function (h) { return h.ok })
     property int historyIndex: -1
     function step(delta) {
         const h = okHistory
-        if (!h.length) return
+        if (!h.length || !current) return
         historyIndex = Math.max(0, Math.min(h.length - 1, historyIndex + delta))
-        editor.text = h[historyIndex].sql
+        current.setText(h[historyIndex].sql)
     }
-    QueryPlan { id: plan; session: root.database }
-    property string resultsTab: "results"         // "results" or "plan"
     property bool panelOpen: Prefs.value("query/panel", "open") === "open"
     onPanelOpenChanged: Prefs.setValue("query/panel", panelOpen ? "open" : "closed")
 
-    QueryResult { id: query; session: root.database }
-
-    // ---- Autocomplete ----
-    SqlCompleter { id: completer; session: root.database }
-    property var completion: ({ start: 0, prefix: "", items: [] })
-    property int completionIndex: 0
-    function updateCompletion(force) {
-        if (!editor.activeFocus) { completionPopup.close(); return }
-        const r = completer.complete(editor.text, editor.cursorPosition, force)
-        if (!r.items.length) { completionPopup.close(); return }
-        completion = r
-        completionIndex = 0
-        if (!completionPopup.visible) completionPopup.open()
-    }
-    function acceptCompletion() {
-        const item = completion.items[completionIndex]
-        if (!item) return
-        const start = completion.start, end = editor.cursorPosition
-        editor.remove(start, end)
-        editor.insert(start, item.text)
-        editor.cursorPosition = start + item.text.length
-        completionPopup.close()
-    }
-    readonly property alias result: query
+    // The builder's own result; each SQL tab has one too.
+    QueryResult { id: builderResult; session: root.database }
+    readonly property alias result: builderResult
 
     Shortcut { sequence: "Ctrl+Return"; enabled: root.visible; onActivated: root.run() }
     Shortcut { sequence: "Ctrl+Enter";  enabled: root.visible; onActivated: root.run() }
+    Shortcut { sequence: "Ctrl+."; enabled: root.visible && root.running; onActivated: root.stop() }
     Shortcut { sequence: "Ctrl+Shift+Return"; enabled: root.visible && root.mode === "sql"; onActivated: root.explain() }
     Shortcut { sequence: "Ctrl+S"; enabled: root.visible && root.mode === "sql"; onActivated: saveDialog.ask("") }
+    Shortcut { sequence: "Ctrl+T"; enabled: root.visible && root.mode === "sql"; onActivated: root.newTab("", "") }
+    Shortcut { sequence: "Ctrl+W"; enabled: root.visible && root.mode === "sql"; onActivated: root.closeTab(root.currentTab) }
 
     function fmt(n) { return Number(n).toLocaleString(Qt.locale(), "f", 0) }
 
@@ -137,7 +165,11 @@ Item {
                 onActivated: function (i) { root.mode = i === 0 ? "builder" : "sql" }
             }
             Item { width: 4; height: 1 }
-            ActionButton { text: "Run   ⌘↩"; primary: true; onClicked: root.run() }
+            ActionButton {
+                text: root.running ? "Stop   ⌘." : "Run   ⌘↩"
+                primary: !root.running
+                onClicked: root.running ? root.stop() : root.run()
+            }
             ActionButton {
                 visible: root.mode === "sql"
                 text: "Explain"
@@ -188,309 +220,121 @@ Item {
         database: root.database
         query: root.result
         demo: root.builderDemo
-        onEditAsSql: function (sql) { editor.text = sql; root.mode = "sql" }
+        onEditAsSql: function (sql) { root.newTab(sql, ""); root.mode = "sql" }
     }
 
-    SplitView {
-        anchors { left: parent.left; right: panel.visible ? panel.left : parent.right; rightMargin: panel.visible ? 14 : 0
-                  top: toolbar.bottom; topMargin: 12; bottom: parent.bottom }
+    // ---- The tab strip ----
+    Item {
+        id: tabStrip
         visible: root.mode === "sql"
-        orientation: Qt.Vertical
-        handle: Rectangle {
-            implicitHeight: 12
-            color: "transparent"
-            Rectangle { anchors.centerIn: parent; width: 44; height: 4; radius: 2
-                        color: SplitHandle.hovered || SplitHandle.pressed ? Theme.accent : Theme.separator }
-        }
-
-        // ---- Editor ----
-        Rectangle {
-            SplitView.preferredHeight: Math.min(root.height * 0.45, Math.max(160, editor.contentHeight + 34))
-            SplitView.minimumHeight: 90
-            radius: Theme.radius
-            color: Theme.surface
-            border.width: 1
-            border.color: editor.activeFocus ? Theme.accent : Theme.separator
-
-            ScrollView {
-                anchors.fill: parent
-                anchors.margins: 1
-                TextArea {
-                    id: editor
-                    font.family: Theme.monoFont
-                    font.pixelSize: Theme.fontBody + 1
-                    color: Theme.text
-                    selectionColor: Theme.accentSoft
-                    selectedTextColor: Theme.text
-                    placeholderText: "SELECT … FROM …"
-                    placeholderTextColor: Theme.textTertiary
-                    wrapMode: TextArea.NoWrap
-                    selectByMouse: true
-                    padding: 14
-                    background: null
-                    tabStopDistance: 28
-
-                    // Autocomplete: as a word is typed, after `alias.` and after FROM/JOIN;
-                    // Ctrl+Space (or ⌥Space) asks anywhere.
-                    property bool typing: false
-                    Keys.onPressed: function (e) {
-                        if (completionPopup.visible) {
-                            if (e.key === Qt.Key_Down) { root.completionIndex = Math.min(root.completion.items.length - 1, root.completionIndex + 1); e.accepted = true; return }
-                            if (e.key === Qt.Key_Up) { root.completionIndex = Math.max(0, root.completionIndex - 1); e.accepted = true; return }
-                            if ((e.key === Qt.Key_Return || e.key === Qt.Key_Enter || e.key === Qt.Key_Tab)
-                                && !(e.modifiers & Qt.ControlModifier)) { root.acceptCompletion(); e.accepted = true; return }
-                            if (e.key === Qt.Key_Escape) { completionPopup.close(); e.accepted = true; return }
+        anchors { left: parent.left; right: panel.visible ? panel.left : parent.right; rightMargin: panel.visible ? 14 : 0
+                  top: toolbar.bottom; topMargin: 10 }
+        height: 32
+        Flickable {
+            id: tabFlick
+            anchors { left: parent.left; right: addTab.left; rightMargin: 6; top: parent.top; bottom: parent.bottom }
+            contentWidth: tabRow.width
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.HorizontalFlick
+            Row {
+                id: tabRow
+                spacing: 4
+                height: parent.height
+                Repeater {
+                    model: tabsModel
+                    Rectangle {
+                        id: chip
+                        readonly property bool on: index === root.currentTab
+                        readonly property var item: tabRepeater.count > index ? tabRepeater.itemAt(index) : null
+                        height: 30
+                        width: Math.min(220, chipLabel.implicitWidth + (renaming ? 120 : 0) + 44)
+                        radius: 7
+                        color: on ? Theme.surface : chipMouse.containsMouse ? Theme.hover : "transparent"
+                        border.width: on ? 1 : 0
+                        border.color: Theme.separator
+                        property bool renaming: false
+                        // A dot while its query runs.
+                        Rectangle {
+                            id: runningDot
+                            visible: chip.item && chip.item.running
+                            x: 10; anchors.verticalCenter: parent.verticalCenter
+                            width: 6; height: 6; radius: 3
+                            color: Theme.accent
                         }
-                        if (e.key === Qt.Key_Space && (e.modifiers & (Qt.ControlModifier | Qt.MetaModifier | Qt.AltModifier))) {
-                            root.updateCompletion(true)
-                            e.accepted = true
-                            return
+                        Text {
+                            id: chipLabel
+                            visible: !chip.renaming
+                            anchors { left: parent.left; leftMargin: runningDot.visible ? 22 : 12; verticalCenter: parent.verticalCenter }
+                            width: Math.min(implicitWidth, 160)
+                            text: root.tabTitle(index) + (model.title, "")
+                            color: chip.on ? Theme.text : Theme.textSecondary
+                            font.pixelSize: Theme.fontBody
+                            font.weight: chip.on ? Font.DemiBold : Font.Normal
+                            elide: Text.ElideRight
                         }
-                        typing = e.text.length > 0 && !(e.modifiers & Qt.ControlModifier)
-                    }
-                    onTextChanged: if (typing) { typing = false; Qt.callLater(root.updateCompletion, false) }
-                    onActiveFocusChanged: if (!activeFocus) completionPopup.close()
-
-                    Popup {
-                        id: completionPopup
-                        x: Math.min(editor.cursorRectangle.x, Math.max(0, editor.width - width))
-                        y: editor.cursorRectangle.y + editor.cursorRectangle.height + 4
-                        width: 340
-                        height: Math.min(260, completionList.contentHeight + 8)
-                        padding: 4
-                        focus: false
-                        closePolicy: Popup.CloseOnPressOutside
-                        background: Rectangle { radius: 8; color: Theme.surface; border.width: 1; border.color: Theme.separator }
-                        ListView {
-                            id: completionList
+                        Field {
+                            visible: chip.renaming
+                            anchors { left: parent.left; leftMargin: 4; right: closeBox.left; verticalCenter: parent.verticalCenter }
+                            implicitHeight: 26
+                            text: root.tabTitle(index)
+                            onVisibleChanged: if (visible) { forceActiveFocus(); selectAll() }
+                            onAccepted: { tabsModel.setProperty(index, "title", text.trim()); chip.renaming = false; saveTabs.restart() }
+                            Keys.onEscapePressed: chip.renaming = false
+                            onActiveFocusChanged: if (!activeFocus) chip.renaming = false
+                        }
+                        MouseArea {
+                            id: chipMouse
                             anchors.fill: parent
-                            clip: true
-                            model: root.completion.items
-                            currentIndex: root.completionIndex
-                            boundsBehavior: Flickable.StopAtBounds
-                            onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
-                            delegate: Rectangle {
-                                width: completionList.width
-                                height: 26
-                                radius: 5
-                                color: index === root.completionIndex ? Theme.accent : completionMouse.containsMouse ? Theme.hover : "transparent"
-                                readonly property bool on: index === root.completionIndex
-                                Rectangle {
-                                    id: kindBadge
-                                    x: 6; anchors.verticalCenter: parent.verticalCenter
-                                    width: 18; height: 18; radius: 4
-                                    color: parent.on ? "#33FFFFFF"
-                                         : modelData.kind === "column" ? Theme.linkSoft
-                                         : modelData.kind === "table" || modelData.kind === "view" ? Theme.accentSoft : Theme.surfaceRaised
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: modelData.kind === "column" ? "C" : modelData.kind === "table" ? "T"
-                                            : modelData.kind === "view" ? "V" : modelData.kind === "function" ? "ƒ" : "K"
-                                        color: parent.parent.on ? "white" : modelData.kind === "column" ? Theme.link
-                                             : modelData.kind === "table" || modelData.kind === "view" ? Theme.accent : Theme.textSecondary
-                                        font.pixelSize: 10; font.weight: Font.Bold
-                                    }
-                                }
-                                Text {
-                                    anchors { left: kindBadge.right; leftMargin: 8; right: detailText.left; rightMargin: 8
-                                              verticalCenter: parent.verticalCenter }
-                                    text: modelData.text
-                                    color: parent.on ? "white" : Theme.text
-                                    font.family: Theme.monoFont
-                                    font.pixelSize: Theme.fontBody
-                                    elide: Text.ElideRight
-                                }
-                                Text {
-                                    id: detailText
-                                    anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
-                                    text: modelData.detail || ""
-                                    color: parent.on ? "#D9FFFFFF" : Theme.textTertiary
-                                    font.pixelSize: Theme.fontSmall
-                                    width: Math.min(implicitWidth, 150)
-                                    elide: Text.ElideLeft
-                                }
-                                MouseArea {
-                                    id: completionMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: { root.completionIndex = index; root.acceptCompletion(); editor.forceActiveFocus() }
-                                }
+                            hoverEnabled: true
+                            acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                            onClicked: function (mouse) {
+                                if (mouse.button === Qt.MiddleButton) { root.closeTab(index); return }
+                                root.currentTab = index
                             }
+                            onDoubleClicked: chip.renaming = true
                         }
+                        Rectangle {
+                            id: closeBox
+                            anchors { right: parent.right; rightMargin: 6; verticalCenter: parent.verticalCenter }
+                            width: 18; height: 18; radius: 4
+                            visible: chipMouse.containsMouse || closeMouse.containsMouse || chip.on
+                            color: closeMouse.containsMouse ? Theme.hover : "transparent"
+                            Rectangle { anchors.centerIn: parent; width: 8; height: 1.4; color: Theme.textSecondary; rotation: 45 }
+                            Rectangle { anchors.centerIn: parent; width: 8; height: 1.4; color: Theme.textSecondary; rotation: -45 }
+                            MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; onClicked: root.closeTab(index) }
+                        }
+                        HoverHandler { id: chipHover }
+                        ToolTip.visible: chipHover.hovered && !chip.renaming; ToolTip.delay: 900
+                        ToolTip.text: "Double-click to rename · ⌘T new tab · ⌘W close"
                     }
                 }
             }
-            SyntaxHighlighter { document: editor.textDocument; dark: Theme.dark }
         }
+        ActionButton {
+            id: addTab
+            anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+            text: "+"
+            implicitHeight: 28
+            onClicked: root.newTab("", "")
+        }
+    }
 
-        // ---- Result ----
-        Item {
-            SplitView.fillHeight: true
-
-            SegmentedControl {
-                id: resultTabs
-                anchors { left: parent.left; top: parent.top }
-                options: [ "Results", "Plan" ]
-                currentIndex: root.resultsTab === "plan" ? 1 : 0
-                onActivated: function (i) { if (i === 1 && !plan.hasPlan && !plan.error.length) root.explain(); else root.resultsTab = i === 1 ? "plan" : "results" }
-            }
-            ExportButton {
-                id: queryExport
-                anchors { right: parent.right; top: parent.top }
-                visible: query.hasResult && root.resultsTab === "results"
-                target: query
-            }
-            Text {
-                anchors { right: queryExport.left; rightMargin: 10; verticalCenter: queryExport.verticalCenter }
-                visible: queryExport.visible && queryExport.message.length > 0
-                text: queryExport.message
-                color: queryExport.failed ? Theme.danger : Theme.positive
-                font.pixelSize: Theme.fontBody
-            }
-            Text {
-                id: status
-                visible: root.resultsTab === "results"
-                anchors { left: resultTabs.right; leftMargin: 14; right: queryExport.visible ? queryExport.left : parent.right
-                          rightMargin: queryExport.visible ? 200 : 0; verticalCenter: resultTabs.verticalCenter }
-                height: 28
-                verticalAlignment: Text.AlignVCenter
-                elide: Text.ElideRight
-                text: query.error.length ? query.error
-                      : query.notice.length ? query.notice
-                      : query.hasResult
-                        ? root.fmt(query.resultRows) + (query.resultRows === 1 ? " row" : " rows")
-                          + (query.truncated ? " (the first " + root.fmt(query.resultRows) + " are shown)" : "")
-                          + "  ·  " + query.elapsedMs + " ms"
-                      : query.lastSql.length
-                        ? "Done in " + query.elapsedMs + " ms"
-                          + (query.rowsAffected >= 0 ? " · " + query.rowsAffected + " rows affected" : "")
-                        : "Write a query and press ⌘↩ to run it."
-                color: query.error.length ? Theme.danger
-                     : query.notice.length ? Theme.accent : Theme.textSecondary
-                font.pixelSize: Theme.fontBody
-                font.family: query.error.length ? Theme.monoFont : Qt.application.font.family
-            }
-
-            ResultGrid {
-                anchors { left: parent.left; right: parent.right; top: resultTabs.bottom; topMargin: 10; bottom: parent.bottom }
-                visible: query.hasResult && root.resultsTab === "results"
-                model: query
-                columns: query.columns
-                valuesForRow: (r) => query.rowAt(r)
-                emptyText: "The query returned no rows."
-            }
-
-            // ---- The plan: how the database would run it ----
-            Item {
-                id: planView
-                anchors { left: parent.left; right: parent.right; top: resultTabs.bottom; topMargin: 10; bottom: parent.bottom }
-                visible: root.resultsTab === "plan"
-                property bool showRaw: false
-                Text {
-                    id: planSummary
-                    anchors { left: parent.left; right: rawToggle.left; rightMargin: 12; top: parent.top }
-                    height: 28
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
-                    text: plan.error.length ? plan.error
-                          : !plan.hasPlan ? "Explain shows how the database would run the query — without running it."
-                          : plan.nodes.length + (plan.nodes.length === 1 ? " step" : " steps")
-                            + (plan.scans ? "  ·  " + plan.scans + (plan.scans === 1 ? " reads a whole table" : " read whole tables")
-                                            + " (no index) — usually what to look at first" : "  ·  every table is read through an index")
-                    color: plan.error.length ? Theme.danger : plan.scans ? Theme.warning : Theme.textSecondary
-                    font.pixelSize: Theme.fontBody
-                }
-                Toggle {
-                    id: rawToggle
-                    anchors { right: parent.right; verticalCenter: planSummary.verticalCenter }
-                    visible: plan.hasPlan
-                    label: "As the database says it"
-                    on: planView.showRaw
-                    onToggled: planView.showRaw = !planView.showRaw
-                }
-                CodeEditor {
-                    anchors { left: parent.left; right: parent.right; top: planSummary.bottom; topMargin: 8; bottom: parent.bottom }
-                    visible: planView.showRaw && plan.hasPlan
-                    text: plan.raw
-                    language: root.database && root.database.dialect === "postgres" ? "cpp" : "sql"
-                    readOnly: true
-                }
-                Rectangle {
-                    anchors { left: parent.left; right: parent.right; top: planSummary.bottom; topMargin: 8; bottom: parent.bottom }
-                    visible: !planView.showRaw && plan.hasPlan
-                    radius: Theme.radius
-                    color: Theme.surface
-                    border.width: 1; border.color: Theme.separator
-                    clip: true
-                    ListView {
-                        id: planList
-                        anchors { fill: parent; margins: 6 }
-                        model: plan.nodes
-                        boundsBehavior: Flickable.StopAtBounds
-                        ScrollBar.vertical: ScrollBar { }
-                        delegate: Rectangle {
-                            width: planList.width
-                            height: 44
-                            radius: 6
-                            color: modelData.scan ? Qt.rgba(Theme.warning.r, Theme.warning.g, Theme.warning.b, 0.10) : "transparent"
-                            Rectangle { visible: modelData.scan; width: 3; height: parent.height; radius: 1.5; color: Theme.warning }
-                            // The tree: indented by depth, with a joint.
-                            Text {
-                                id: joint
-                                x: 12 + modelData.depth * 20
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData.depth > 0 ? "└" : "●"
-                                color: Theme.textTertiary
-                                font.pixelSize: modelData.depth > 0 ? Theme.fontHeading : 8
-                            }
-                            Column {
-                                anchors { left: joint.right; leftMargin: 8; right: figures.left; rightMargin: 12
-                                          verticalCenter: parent.verticalCenter }
-                                spacing: 2
-                                Text {
-                                    width: parent.width
-                                    text: modelData.label + (modelData.scan ? "   — reads all of " + (modelData.table || "the table") : "")
-                                    color: modelData.scan ? Theme.warning : Theme.text
-                                    font.pixelSize: Theme.fontBody; font.weight: Font.DemiBold
-                                    elide: Text.ElideRight
-                                }
-                                Text {
-                                    width: parent.width
-                                    visible: text.length > 0
-                                    text: modelData.detail
-                                    color: Theme.textSecondary
-                                    font.pixelSize: Theme.fontSmall + 1
-                                    font.family: Theme.monoFont
-                                    elide: Text.ElideRight
-                                }
-                            }
-                            // Estimated rows, and the step's share of the cost as a bar.
-                            Row {
-                                id: figures
-                                anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
-                                spacing: 12
-                                Text {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    visible: modelData.rows >= 0
-                                    text: "~" + Number(modelData.rows).toLocaleString(Qt.locale(), "f", 0) + (modelData.rows === 1 ? " row" : " rows")
-                                    color: Theme.textTertiary
-                                    font.pixelSize: Theme.fontSmall + 1
-                                    font.family: Theme.monoFont
-                                }
-                                Rectangle {
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    visible: modelData.cost >= 0
-                                    width: 110; height: 8; radius: 4
-                                    color: Theme.surfaceRaised
-                                    Rectangle {
-                                        width: Math.max(3, parent.width * modelData.share); height: parent.height; radius: 4
-                                        color: modelData.scan ? Theme.warning : Theme.accent
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+    // ---- The tabs themselves: only the current one shows ----
+    Item {
+        id: tabArea
+        visible: root.mode === "sql"
+        anchors { left: parent.left; right: panel.visible ? panel.left : parent.right; rightMargin: panel.visible ? 14 : 0
+                  top: tabStrip.bottom; topMargin: 8; bottom: parent.bottom }
+        Repeater {
+            id: tabRepeater
+            model: tabsModel
+            SqlTab {
+                anchors.fill: parent
+                visible: index === root.currentTab
+                database: root.database
+                library: root.queryLibrary
+                onEdited: saveTabs.restart()
             }
         }
     }
@@ -585,15 +429,16 @@ Item {
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
                     // One click puts it in the editor; a double click runs it too.
                     onClicked: function (mouse) {
-                        if (mouse.button === Qt.RightButton && root.panelTab === "saved") {
-                            root.menuName = modelData.name
-                            savedMenu.popup()
+                        if (mouse.button === Qt.RightButton) {
+                            root.menuName = modelData.name || ""
+                            root.menuSql = modelData.sql
+                            (root.panelTab === "saved" ? savedMenu : historyMenu).popup()
                             return
                         }
-                        editor.text = modelData.sql
+                        if (root.current) root.current.setText(modelData.sql)
                         historyIndex = -1
                     }
-                    onDoubleClicked: { editor.text = modelData.sql; root.run() }
+                    onDoubleClicked: { if (root.current) root.current.setText(modelData.sql); root.run() }
                 }
             }
         }
@@ -606,6 +451,7 @@ Item {
             text: panelFilter.text.length ? "Nothing matches."
                   : root.panelTab === "saved" ? "Save a query (⌘S) to keep it here, for this database."
                   : "Queries you run here appear in this list."
+                    + "\nRight-click one to open it in a new tab."
             color: Theme.textTertiary
             font.pixelSize: Theme.fontBody
         }
@@ -629,9 +475,18 @@ Item {
             }
         }
     }
-    property string menuName: ""
+    property string menuName: ""               // a saved query's name ("" for history)
+    property string menuSql: ""
+    ContextMenu {
+        id: historyMenu
+        ContextMenuItem { text: "Open in new tab"; onTriggered: root.newTab(root.menuSql, "") }
+        ContextMenuItem { text: "Run in new tab"; onTriggered: { root.newTab(root.menuSql, ""); root.run() } }
+    }
     ContextMenu {
         id: savedMenu
+        ContextMenuItem { text: "Open in new tab"; onTriggered: root.newTab(root.menuSql, root.menuName) }
+        ContextMenuItem { text: "Run in new tab"; onTriggered: { root.newTab(root.menuSql, root.menuName); root.run() } }
+        ContextMenuSeparator { }
         ContextMenuItem { text: "Rename…"; onTriggered: saveDialog.askRename(root.menuName) }
         ContextMenuItem { text: "Delete"; danger: true; onTriggered: library.remove(root.menuName) }
     }

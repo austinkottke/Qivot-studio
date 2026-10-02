@@ -114,6 +114,68 @@ private slots:
         QVERIFY(!q.run("SELECT 1"));
         QCOMPARE(q.error(), QString("Open a database first."));
     }
+
+    // ---- In the background ----
+    void startsInTheBackground()
+    {
+        QueryModel q;
+        q.setSession(&m_db);
+        QSignalSpy done(&q, &QueryModel::finished);
+        q.start("SELECT id, title FROM book ORDER BY id LIMIT 5");
+        QVERIFY(q.running());
+        QVERIFY(done.wait(10000));
+        QVERIFY(!q.running());
+        QVERIFY2(q.error().isEmpty(), qPrintable(q.error()));
+        QCOMPARE(q.rowCount(), 5);
+        QCOMPARE(q.data(q.index(0, 0), QueryModel::RawRole).toInt(), 1);
+        QVERIFY(!q.cancelled());
+
+        // Still read-only: the worker's connection is made like the session's.
+        q.start("DELETE FROM review");
+        QVERIFY(done.wait(10000));
+        QVERIFY(!q.error().isEmpty());
+        QVERIFY(q.run("SELECT COUNT(*) FROM review"));
+        QCOMPARE(q.data(q.index(0, 0), QueryModel::RawRole).toInt(), 6000);
+
+        // Mistakes are reported straight away, without a thread.
+        done.clear();
+        q.start("   ");
+        QVERIFY(!q.running());
+        QCOMPARE(done.count(), 1);
+        QCOMPARE(q.error(), QString("Type a query to run."));
+        QVERIFY(q.waitForBackground(10000));
+    }
+
+    void stops()
+    {
+        QueryModel q;
+        q.setSession(&m_db);
+        QSignalSpy done(&q, &QueryModel::finished);
+        // Rows that come slowly (one in millions): Stop ends the reading. (SQLite
+        // has no way to be asked to stop; a server is asked, see tst_servers.)
+        const QString slow = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n) "
+                             "SELECT x FROM n WHERE x % 2000000 = 0";
+        q.start(slow);
+        QTest::qWait(150);
+        QVERIFY(q.running());
+        q.cancel();
+        QVERIFY(!q.running());
+        QVERIFY(q.cancelled());
+        QCOMPARE(done.count(), 1);
+        QVERIFY(q.notice().startsWith("Stopped after"));
+        QCOMPARE(q.rowCount(), 0);
+        QVERIFY(q.waitForBackground(10000));
+        QTest::qWait(50);
+        QCOMPARE(done.count(), 1);            // the stopped run delivered nothing
+
+        // A new run replaces one in progress.
+        q.start(slow);
+        q.start("SELECT 42");
+        QVERIFY(done.wait(10000));
+        QTRY_VERIFY_WITH_TIMEOUT(!q.running(), 10000);
+        QCOMPARE(q.data(q.index(0, 0), QueryModel::RawRole).toInt(), 42);
+        QVERIFY(q.waitForBackground(10000));
+    }
 };
 
 QTEST_GUILESS_MAIN(TestQueryModel)

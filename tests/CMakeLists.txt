@@ -119,6 +119,10 @@ add_test(NAME app_smoke_query COMMAND qivot-studio --sample --smoke
          --query "SELECT a.country, COUNT(*) AS books FROM book b JOIN author a ON a.id = b.author_id GROUP BY 1")
 set_tests_properties(app_smoke_query PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
 
+# A block of cells selected in a table's rows: the selection and its sums bar.
+add_test(NAME app_smoke_select COMMAND qivot-studio --sample --table book --view data --select-cells 1,1,4,3 --smoke)
+set_tests_properties(app_smoke_select PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
+
 # The C++ tab, on a table with foreign keys.
 add_test(NAME app_smoke_cpp COMMAND qivot-studio --sample --table book --view cpp --smoke)
 set_tests_properties(app_smoke_cpp PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")

@@ -25,6 +25,7 @@
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
+#include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QScreen>
@@ -58,6 +59,8 @@ Q_IMPORT_QML_PLUGIN(QivotUIPlugin)
 #include "querylibrary.h"
 #include "queryplan.h"
 #include "sqlcompleter.h"
+#include "gridtools.h"
+#include "connectionhistory.h"
 #include "schemadesign.h"
 #include "querymodel.h"
 #include "rowsmodel.h"
@@ -110,6 +113,8 @@ void registerQt5Types()
     qmlRegisterType<QueryPlan>(uri, 1, 0, "QueryPlan");
     qmlRegisterSingletonType<DiagramGeometry>(uri, 1, 0, "DiagramGeometry", createSingleton<DiagramGeometry>);
     qmlRegisterSingletonType<Prefs>(uri, 1, 0, "Prefs", createSingleton<Prefs>);
+    qmlRegisterSingletonType<GridTools>(uri, 1, 0, "GridTools", createSingleton<GridTools>);
+    qmlRegisterSingletonType<ConnectionHistory>(uri, 1, 0, "ConnectionHistory", createSingleton<ConnectionHistory>);
 }
 #endif
 
@@ -175,6 +180,9 @@ int main(int argc, char *argv[])
                                   QStringLiteral("table"));
     const QCommandLineOption selectRow(QStringLiteral("select-row"), QStringLiteral("Inspect row <n> on the Data tab."),
                                        QStringLiteral("n"));
+    const QCommandLineOption selectCells(QStringLiteral("select-cells"),
+                                         QStringLiteral("Select a block of cells in the first grid shown: top,left,bottom,right (from 1)."),
+                                         QStringLiteral("t,l,b,r"));
     const QCommandLineOption dark(QStringLiteral("dark"), QStringLiteral("Force dark mode."));
     const QCommandLineOption light(QStringLiteral("light"), QStringLiteral("Force light mode."));
     const QCommandLineOption models(QStringLiteral("models"),
@@ -224,7 +232,7 @@ int main(int argc, char *argv[])
     const QCommandLineOption shotDelay(QStringLiteral("shot-delay"),
                                        QStringLiteral("Wait <ms> before --shot / --smoke quit (default 1500)."),
                                        QStringLiteral("ms"));
-    cli.addOptions({ models, exportTo, queryBuilder, builderDemo, buildProject, projectFolder, designDemo, designMenu, designTab, projectsDir, shotDelay, allowChanges, editDemo, compareWith, exportDiagram, explainOption, completeDemo, wheel, wheelPixels, sample, openSample, sampleSql, shot, smoke, table, view, connect, connectDialog, queryText, size, find, selectRow,
+    cli.addOptions({ models, exportTo, queryBuilder, builderDemo, buildProject, projectFolder, designDemo, designMenu, designTab, projectsDir, shotDelay, allowChanges, editDemo, compareWith, exportDiagram, explainOption, completeDemo, wheel, wheelPixels, sample, openSample, sampleSql, shot, smoke, table, view, connect, connectDialog, queryText, size, find, selectRow, selectCells,
                     dark, light });
     cli.process(app);
 
@@ -281,6 +289,8 @@ int main(int argc, char *argv[])
     }
 
     QQmlApplicationEngine engine;
+    // For screenshots: every grid can see it; the first with rows takes it.
+    engine.rootContext()->setContextProperty(QStringLiteral("startupCells"), cli.value(selectCells));
     engine.setInitialProperties({
         { QStringLiteral("startupFile"),   cli.positionalArguments().value(0) },
         { QStringLiteral("startupSample"), cli.isSet(sample) || cli.isSet(openSample) },
@@ -308,6 +318,7 @@ int main(int argc, char *argv[])
         { QStringLiteral("projectsDir"),   cli.isSet(projectsDir) ? QFileInfo(cli.value(projectsDir)).absoluteFilePath() : QString() },
         { QStringLiteral("startupFind"),   cli.value(find) },
         { QStringLiteral("screenshotMode"), cli.isSet(shot) },
+        { QStringLiteral("rememberConnections"), !cli.isSet(shot) && !cli.isSet(smoke) && !cli.isSet(size) },
         { QStringLiteral("startupRow"),    cli.isSet(selectRow) ? cli.value(selectRow).toInt() - 1 : -1 },
         { QStringLiteral("startupConnection"),
           cli.isSet(connect) ? QVariant(parseConnectUrl(cli.value(connect))) : QVariant(QVariantMap()) },
