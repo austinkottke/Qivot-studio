@@ -100,12 +100,22 @@ def main():
     if a.mysql_lib:
         cmake.append(f"-DMySQL_LIBRARY={a.mysql_lib}")
     if a.arch:
-        cmake.append(f"-DCMAKE_OSX_ARCHITECTURES={a.arch}")
+        # Just this one: Qt's toolchain builds all of a universal Qt's
+        # architectures for its own modules, and forces the MySQL driver to
+        # Intel only, unless told otherwise.
+        cmake += [f"-DCMAKE_OSX_ARCHITECTURES={a.arch}", "-DQT_FORCE_SINGLE_QT_OSX_ARCHITECTURE=ON",
+                  "-DQT_FORCE_MACOS_ALL_ARCHES=ON"]
     run(cmake)
     run(["cmake", "--build", build, "--parallel"])
     run(["cmake", "--install", build])
 
     plugins = qt / "plugins" / "sqldrivers"
+    if a.arch and sys.platform == "darwin":
+        for f in plugins.glob("libqsql*sql.dylib"):
+            archs = subprocess.run(["lipo", "-archs", str(f)], capture_output=True, text=True).stdout.split()
+            print(f.name, "is", " ".join(archs))
+            if archs != [a.arch]:
+                sys.exit(f"{f.name} was built for {' '.join(archs)}, not {a.arch}")
     found = sorted(f.name for f in plugins.iterdir() if "psql" in f.name or "mysql" in f.name)
     print("Installed in", plugins, ":", ", ".join(found))
     if not any("psql" in f for f in found) or not any("mysql" in f for f in found):
