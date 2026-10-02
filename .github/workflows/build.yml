@@ -67,7 +67,7 @@ jobs:
         if: failure()
         shell: python
         run: |
-          import pathlib, re
+          import pathlib, re, shlex, subprocess
           log = pathlib.Path("build/Testing/Temporary/LastTest.log")
           text = log.read_text(errors="replace") if log.exists() else "No LastTest.log: the tests never ran."
           # One block per test: keep the ones that didn't pass.
@@ -75,7 +75,22 @@ jobs:
           failed = [b for b in blocks if "Test Passed." not in b and "Testing:" in b] or [text]
           for b in failed[:5]:
               name = re.search(r"Testing: (\S+)", b)
-              body = b[-6000:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              # Run it again on its own: ctest's log can lose a crashed test's
+              # output, and doesn't say how it ended. Exit codes like 0xC0000005
+              # (access violation) or 0xC00000FD (stack overflow) do.
+              command = re.search(r"^Command: (.*)$", b, re.M)
+              directory = re.search(r"^Directory: (.*)$", b, re.M)
+              if command:
+                  try:
+                      args = [a.strip('"') for a in shlex.split(command.group(1), posix=False)]
+                      run = subprocess.run(args,
+                                           cwd=directory.group(1) if directory else None,
+                                           capture_output=True, text=True, errors="replace", timeout=900)
+                      b += f"\n--- run again: exit code {run.returncode} (0x{run.returncode & 0xFFFFFFFF:08X})\n"
+                      b += (run.stdout + run.stderr)[-8000:]
+                  except Exception as e:
+                      b += f"\n--- couldn't run it again: {e}\n"
+              body = b[-12000:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
               print(f"::error title={name.group(1) if name else 'tests'} failed::{body}")
 
       # A screenshot of the real app on every run, so UI changes are visible in review.
