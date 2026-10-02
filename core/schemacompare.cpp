@@ -108,7 +108,7 @@ void SchemaCompare::compute()
 bool SchemaCompare::saveMigration(const QVariant &fileOrUrl)
 {
     QFile f(DataTransfer::localPath(fileOrUrl));
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         m_error = tr("Couldn't write %1: %2").arg(QFileInfo(f.fileName()).fileName(), f.errorString());
         emit changed();
         return false;

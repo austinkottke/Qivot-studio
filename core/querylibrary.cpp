@@ -33,8 +33,10 @@ void QueryLibrary::load()
     if (m_scope.isEmpty())
         return;
     QSettings s;
-    m_history = QJsonDocument::fromJson(s.value(key("history")).toByteArray()).array().toVariantList();
-    m_saved = QJsonDocument::fromJson(s.value(key("saved")).toByteArray()).array().toVariantList();
+    // Kept as text: a QByteArray doesn't come back from the Windows registry as
+    // it went in. (toString() also reads what older versions stored as bytes.)
+    m_history = QJsonDocument::fromJson(s.value(key("history")).toString().toUtf8()).array().toVariantList();
+    m_saved = QJsonDocument::fromJson(s.value(key("saved")).toString().toUtf8()).array().toVariantList();
 }
 
 void QueryLibrary::store()
@@ -42,8 +44,8 @@ void QueryLibrary::store()
     if (m_scope.isEmpty())
         return;
     QSettings s;
-    s.setValue(key("history"), QJsonDocument(QJsonArray::fromVariantList(m_history)).toJson(QJsonDocument::Compact));
-    s.setValue(key("saved"), QJsonDocument(QJsonArray::fromVariantList(m_saved)).toJson(QJsonDocument::Compact));
+    s.setValue(key("history"), QString::fromUtf8(QJsonDocument(QJsonArray::fromVariantList(m_history)).toJson(QJsonDocument::Compact)));
+    s.setValue(key("saved"), QString::fromUtf8(QJsonDocument(QJsonArray::fromVariantList(m_saved)).toJson(QJsonDocument::Compact)));
     s.setValue(key("scope"), m_scope);         // so a person reading the settings can tell what's whose
 }
 

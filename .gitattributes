@@ -1,0 +1,3 @@
+# Sources check out with LF everywhere, Windows included: Studio embeds
+# third_party/qivot and copies it into exported projects, where CRLF broke moc.
+* text=auto eol=lf

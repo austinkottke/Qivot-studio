@@ -16,7 +16,8 @@ static QString qivotFile(const QString &name)
 {
     Q_INIT_RESOURCE(qivot);
     QFile f(QStringLiteral(":/qivot/") + name);
-    return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+    // As checked out: CRLF on a Windows clone. Exported projects get LF.
+    return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()).remove(QLatin1Char('\r')) : QString();
 }
 
 namespace {
@@ -451,7 +452,7 @@ bool ProjectExport::write()
             return false;
         }
         QFile file(path);
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text) || file.write(it.value().toUtf8()) < 0) {
+        if (!file.open(QIODevice::WriteOnly) || file.write(it.value().toUtf8()) < 0) {
             setError(tr("Couldn't write %1: %2").arg(path, file.errorString()));
             return false;
         }
@@ -472,7 +473,7 @@ bool ProjectExport::writeFile(const QString &file)
     const QString path = QDir(root).filePath(file);
     QDir().mkpath(QFileInfo(path).absolutePath());
     QFile out(path);
-    if (!out.open(QIODevice::WriteOnly | QIODevice::Text) || out.write(m_files.value(file).toUtf8()) < 0) {
+    if (!out.open(QIODevice::WriteOnly) || out.write(m_files.value(file).toUtf8()) < 0) {
         setError(tr("Couldn't write %1: %2").arg(path, out.errorString()));
         return false;
     }
