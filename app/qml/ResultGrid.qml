@@ -98,11 +98,14 @@ Item {
         ignoreUnknownSignals: true
         function onModelReset() { root.clearSelection() }
     }
-    // --select-cells (screenshots): a block selected once there are rows.
+    // --select-cells t,l,b,r (screenshots): a block selected once there are rows.
     property bool startupCellsDone: false
     function takeStartupCells() {
-        if (startupCellsDone || !startupCells.length || grid.rows === 0 || !root.visible) return
-        const p = startupCells.split(",").map(Number)
+        if (startupCellsDone || grid.rows === 0 || !root.visible) return
+        const args = Qt.application.arguments
+        const at = args.indexOf("--select-cells")
+        if (at < 0 || at + 1 >= args.length) { startupCellsDone = true; return }
+        const p = args[at + 1].split(",").map(Number)
         if (p.length !== 4) return
         startupCellsDone = true
         selectBlock(p[0] - 1, p[1] - 1, p[2] - 1, p[3] - 1)

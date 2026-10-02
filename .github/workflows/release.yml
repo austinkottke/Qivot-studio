@@ -1,15 +1,20 @@
 name: Release
 
-# Builds the macOS DMG (universal: Apple Silicon and Intel) with
-# tools/package-macos.sh and checks the app inside it starts cleanly.
+# Builds Qivot Studio for macOS (a DMG each for Apple Silicon and Intel),
+# Windows (a zip) and Linux (an AppImage), each with Qt and the database
+# drivers' client libraries inside, so PostgreSQL and MySQL work without
+# installing anything (SQL Server still needs Microsoft's ODBC driver).
+# Every package is checked: its drivers must load from inside it, and on
+# Windows and Linux it must connect to a real PostgreSQL and MySQL.
+#
 # It only runs when started by hand: Actions > Release > Run workflow, choosing
 #   - the version (blank: the one in CMakeLists.txt)
-#   - whether to publish it as a GitHub Release (tag v<version>), or just keep
-#     the DMG as the run's artifact
+#   - whether to publish them as a GitHub Release (tag v<version>), or just keep
+#     them as the run's artifacts
 # or from the command line: gh workflow run release.yml -f version=0.2.0 -f publish=true
 #
-# Signing: without secrets the app is signed ad hoc, so macOS asks users to
-# right-click > Open it the first time. To sign and notarize it, add these
+# Signing (macOS): without secrets the app is signed ad hoc, so macOS asks users
+# to right-click > Open it the first time. To sign and notarize it, add these
 # repository secrets:
 #   MACOS_CERT_P12         base64 of a "Developer ID Application" certificate (.p12)
 #   MACOS_CERT_PASSWORD    its password
@@ -39,11 +44,21 @@ concurrency:
 permissions:
   contents: write          # to create the GitHub Release and its tag
 
+env:
+  QT_VERSION: 6.8.3
+
 jobs:
-  macos-dmg:
-    name: macOS DMG
-    runs-on: macos-15
-    timeout-minutes: 45
+  # ---- macOS: one DMG per architecture, with that Mac's Homebrew libpq and MySQL client ----
+  macos:
+    name: macOS (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Apple Silicon, runner: macos-15,       arch: arm64 }
+          - { name: Intel,         runner: macos-15-intel, arch: x86_64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     env:
       HAS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
       HAS_NOTARY: ${{ secrets.APPLE_ID != '' }}
@@ -51,12 +66,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Qt 6.8.3
+      - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: 6.8.3
+          version: ${{ env.QT_VERSION }}
           arch: clang_64
           cache: true
+
+      - name: Database client libraries
+        run: |
+          brew install libpq mysql-client libiodbc ninja
+          echo "PG_ROOT=$(brew --prefix libpq)" >> "$GITHUB_ENV"
+          echo "MYSQL_ROOT=$(brew --prefix mysql-client)" >> "$GITHUB_ENV"
+
+      - name: PostgreSQL and MySQL drivers
+        run: |
+          mkdir -p logs
+          python3 tools/package/build-sql-drivers.py --qt "$QT_ROOT_DIR" --arch ${{ matrix.arch }} \
+            --pg-root "$PG_ROOT" \
+            --mysql-include "$MYSQL_ROOT/include/mysql" --mysql-lib "$MYSQL_ROOT/lib/libmysqlclient.dylib" 2>&1 | tee -a logs/release.log
 
       - name: Version
         env:
@@ -83,7 +111,9 @@ jobs:
       - name: Build the DMG
         env:
           MACOS_SIGN_IDENTITY: ${{ env.HAS_CERT == 'true' && secrets.MACOS_SIGN_IDENTITY || '' }}
-        run: tools/package-macos.sh "$QT_ROOT_DIR" "$VERSION" dist
+          MACOS_ARCHS: ${{ matrix.arch }}
+          REQUIRE_DRIVERS: QPSQL,QMYSQL
+        run: tools/package-macos.sh "$QT_ROOT_DIR" "$VERSION" dist 2>&1 | tee -a logs/release.log
 
       - name: Notarize
         if: env.HAS_CERT == 'true' && env.HAS_NOTARY == 'true'
@@ -96,29 +126,220 @@ jobs:
                 --password "$APPLE_APP_PASSWORD" --wait
           xcrun stapler staple dist/*.dmg
 
-      # The app in the DMG must start and load every screen without a QML warning.
+      # The app in the DMG must start and load every screen without a QML
+      # warning, and its drivers must load from inside it.
       - name: Check the app in the DMG
         run: |
           mnt=$(hdiutil attach -nobrowse -readonly dist/*.dmg | tail -1 | sed 's/.*\(\/Volumes\/.*\)/\1/')
           app="$mnt/Qivot Studio.app/Contents/MacOS/Qivot Studio"
           lipo -archs "$app"
+          "$app" --list-drivers --require-drivers QPSQL,QMYSQL
           "$app" --sample --smoke
           "$app" --sample --view design --design-demo --smoke
           "$app" --sample --builder-demo --smoke
           "$app" --sample --table book --view profile --smoke --shot-delay 2500
           hdiutil detach "$mnt"
 
+      # The end of the log as an annotation: readable without signing in.
+      - name: Annotate a failure
+        if: failure()
+        shell: python
+        run: |
+          import pathlib
+          log = pathlib.Path("logs/release.log")
+          text = log.read_text(errors="replace")[-12000:] if log.exists() else "No log: it failed before building."
+          print("::error title=Release build failed::" + text.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
+
       - uses: actions/upload-artifact@v4
         with:
-          name: Qivot-Studio-${{ env.VERSION }}-macOS
+          name: Qivot-Studio-${{ env.VERSION }}-macOS-${{ matrix.arch }}
           path: dist/*.dmg
           if-no-files-found: error
 
+  # ---- Windows: a zip, with the runner's PostgreSQL and MySQL client DLLs ----
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2022_64
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      # The runner has PostgreSQL and MySQL installed: their client libraries
+      # build the drivers and go in the zip, and their servers check it connects.
+      - name: Database client libraries
+        run: |
+          python -m pip install --quiet pefile
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) { choco install ninja -y --no-progress }
+          $pg = $env:PGROOT
+          if (-not $pg) { $pg = (Get-ChildItem "C:\Program Files\PostgreSQL" -Directory | Sort-Object Name | Select-Object -Last 1).FullName }
+          $mysql = (Get-ChildItem "C:\Program Files\MySQL" -Directory -Filter "MySQL Server*" | Sort-Object Name | Select-Object -Last 1).FullName
+          Write-Host "PostgreSQL: $pg"; Write-Host "MySQL: $mysql"
+          if (-not (Test-Path "$pg\include\libpq-fe.h")) { throw "No PostgreSQL client in $pg" }
+          if (-not (Test-Path "$mysql\include\mysql.h")) { throw "No MySQL client in $mysql" }
+          "PG_ROOT=$pg" >> $env:GITHUB_ENV
+          "MYSQL_ROOT=$mysql" >> $env:GITHUB_ENV
+          # Start the PostgreSQL server for the connection check (user postgres, password root).
+          Get-Service -Name "postgresql*" | Set-Service -StartupType Manual -PassThru | Start-Service
+          Get-Service -Name "postgresql*"
+
+      - name: PostgreSQL and MySQL drivers
+        run: |
+          New-Item -ItemType Directory -Force logs | Out-Null
+          python tools/package/build-sql-drivers.py --qt "$env:QT_ROOT_DIR" --pg-root "$env:PG_ROOT" `
+            --mysql-include "$env:MYSQL_ROOT\include" --mysql-lib "$env:MYSQL_ROOT\lib\libmysql.lib" 2>&1 | Tee-Object -Append logs/release.log
+
+      - name: Version
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          $version = $env:REQUESTED -replace '^v', ''
+          if (-not $version) { $version = (Select-String -Path CMakeLists.txt -Pattern '^\s*VERSION ([0-9.]+)$' | Select-Object -First 1).Matches[0].Groups[1].Value }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Build
+        run: |
+          cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release 2>&1 | Tee-Object -Append logs/release.log
+          cmake --build build-release --target qivot-studio --parallel 2>&1 | Tee-Object -Append logs/release.log
+
+      - name: Package and check
+        run: |
+          $exe = (Get-ChildItem build-release -Recurse -Filter "Qivot Studio.exe" | Select-Object -First 1).FullName
+          python tools/package/package-windows.py --qt "$env:QT_ROOT_DIR" --exe "$exe" --version "$env:VERSION" --out dist `
+            --search "$env:PG_ROOT\bin" --search "$env:MYSQL_ROOT\bin" --search "$env:MYSQL_ROOT\lib" `
+            --require-drivers QPSQL,QMYSQL `
+            --try-connect "postgres://postgres:root@127.0.0.1:5432/postgres" 2>&1 | Tee-Object -Append logs/release.log
+
+      # The end of the log as an annotation: readable without signing in.
+      - name: Annotate a failure
+        if: failure()
+        shell: python
+        run: |
+          import pathlib
+          log = pathlib.Path("logs/release.log")
+          text = log.read_text(errors="replace")[-12000:] if log.exists() else "No log: it failed before building."
+          print("::error title=Release build failed::" + text.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Qivot-Studio-${{ env.VERSION }}-Windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  # ---- Linux: an AppImage, built on an older Ubuntu so it runs on newer ones ----
+  linux:
+    name: Linux
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    # Servers to connect to from the finished AppImage.
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_USER: qivot, POSTGRES_PASSWORD: qivot, POSTGRES_DB: studio }
+        ports: [ "5432:5432" ]
+        options: --health-cmd "pg_isready -U qivot" --health-interval 5s --health-timeout 5s --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env: { MYSQL_ROOT_PASSWORD: qivot, MYSQL_DATABASE: studio }
+        ports: [ "3306:3306" ]
+        options: --health-cmd "mysqladmin ping -pqivot" --health-interval 5s --health-timeout 5s --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: linux_gcc_64
+          cache: true
+
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build file \
+            libgl1-mesa-dev libegl1 libopengl0 libxkbcommon-dev libxkbcommon-x11-0 libfontconfig1 libdbus-1-3 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 \
+            libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libx11-xcb1 libxcb-util1 libsm6 libice6 libwayland-cursor0 libwayland-egl1 \
+            libpq-dev libmysqlclient-dev unixodbc
+
+      - name: PostgreSQL and MySQL drivers
+        run: |
+          mkdir -p logs
+          python3 tools/package/build-sql-drivers.py --qt "$QT_ROOT_DIR" \
+            --mysql-include /usr/include/mysql --mysql-lib /usr/lib/x86_64-linux-gnu/libmysqlclient.so 2>&1 | tee -a logs/release.log
+
+      - name: Version
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          version="${REQUESTED#v}"
+          [ -n "$version" ] || version=$(sed -n 's/^ *VERSION \([0-9.]*\)$/\1/p' CMakeLists.txt | head -1)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Build the AppImage
+        env:
+          REQUIRE_DRIVERS: QPSQL,QMYSQL
+          TRY_CONNECT: postgres://qivot:qivot@127.0.0.1:5432/studio mysql://root:qivot@127.0.0.1:3306/studio
+        run: tools/package/package-linux.sh "$QT_ROOT_DIR" "$VERSION" dist 2>&1 | tee -a logs/release.log
+
+      - name: Check the app in the AppImage
+        env:
+          QT_QPA_PLATFORM: offscreen
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: |
+          app=$(ls dist/*.AppImage)
+          "$app" --sample --smoke
+          "$app" --sample --builder-demo --smoke
+
+      # The end of the log as an annotation: readable without signing in.
+      - name: Annotate a failure
+        if: failure()
+        shell: python
+        run: |
+          import pathlib
+          log = pathlib.Path("logs/release.log")
+          text = log.read_text(errors="replace")[-12000:] if log.exists() else "No log: it failed before building."
+          print("::error title=Release build failed::" + text.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Qivot-Studio-${{ env.VERSION }}-Linux-x86_64
+          path: dist/*.AppImage
+          if-no-files-found: error
+
+  # ---- All of them as one GitHub Release ----
+  publish:
+    name: Publish
+    if: inputs.publish
+    needs: [ macos, windows, linux ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - name: Publish the release
-        if: inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
+          REQUESTED: ${{ inputs.version }}
           PRERELEASE: ${{ inputs.prerelease && '--prerelease' || '' }}
         run: |
-          gh release create "v$VERSION" dist/*.dmg --target "$GITHUB_SHA" \
-            --title "Qivot Studio $VERSION" --generate-notes $PRERELEASE
+          version="${REQUESTED#v}"
+          [ -n "$version" ] || version=$(sed -n 's/^ *VERSION \([0-9.]*\)$/\1/p' CMakeLists.txt | head -1)
+          ls -la dist
+          gh release create "v$version" dist/* --target "$GITHUB_SHA" \
+            --title "Qivot Studio $version" --generate-notes $PRERELEASE

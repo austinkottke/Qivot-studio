@@ -21,11 +21,13 @@
     qivot-studio db.sqlite --export ~/Projects/Shop   write a buildable project (models, example, tests), quit
  */
 #include <QCommandLineParser>
+#include <QCoreApplication>
+#include <QSqlDatabase>
+#include <QTextStream>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
-#include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QScreen>
@@ -131,8 +133,54 @@ void countingHandler(QtMsgType type, const QMessageLogContext &context, const QS
 }
 } // namespace
 
+// --list-drivers [--require-drivers QPSQL,QMYSQL] [--try-connect <url>]...:
+// which database drivers load, without a window, and whether each server
+// given connects (a package's check that its drivers came with everything
+// they need). Exit 1 if a required driver doesn't load or a server doesn't connect.
+static int listDrivers(int argc, char *argv[])
+{
+    QCoreApplication app(argc, argv);
+    QStringList required;
+    const QStringList args = app.arguments();
+    const int at = args.indexOf(QStringLiteral("--require-drivers"));
+    if (at >= 0 && at + 1 < args.size())
+        required = args.at(at + 1).split(QLatin1Char(','), Qt::SkipEmptyParts);
+    QTextStream out(stdout);
+    int missing = 0;
+    for (const QString &name : QStringList{ "QSQLITE", "QPSQL", "QMYSQL", "QMARIADB", "QODBC" }) {
+        const bool listed = QSqlDatabase::drivers().contains(name);
+        const bool loads = listed && DatabaseSession::driverLoads(name);
+        out << name << ": " << (loads ? "loads" : listed ? "found, but doesn't load" : "not here") << '\n';
+        // QMYSQL is satisfied by QMARIADB, and the other way round.
+        if (required.contains(name) && !loads
+            && !((name == QLatin1String("QMYSQL") || name == QLatin1String("QMARIADB"))
+                 && (DatabaseSession::driverLoads(QStringLiteral("QMYSQL")) || DatabaseSession::driverLoads(QStringLiteral("QMARIADB")))))
+            ++missing;
+    }
+    for (int i = 0; i + 1 < args.size(); ++i) {
+        if (args.at(i) != QLatin1String("--try-connect"))
+            continue;
+        const QVariantMap s = parseConnectUrl(args.at(i + 1));
+        DatabaseSession db;
+        const QString where = s.value(QStringLiteral("type")).toString() + QStringLiteral(" ")
+                              + s.value(QStringLiteral("host")).toString() + QLatin1Char('/') + s.value(QStringLiteral("database")).toString();
+        if (db.connectTo(s)) {
+            out << "connect " << where << ": ok, " << db.tables().size() << " tables\n";
+        } else {
+            out << "connect " << where << ": FAILED - " << db.error() << '\n';
+            ++missing;
+        }
+    }
+    out.flush();
+    return missing ? 1 : 0;
+}
+
 int main(int argc, char *argv[])
 {
+    for (int i = 1; i < argc; ++i)
+        if (qstrcmp(argv[i], "--list-drivers") == 0)
+            return listDrivers(argc, argv);
+
     previousHandler = qInstallMessageHandler(countingHandler);
 
     QGuiApplication app(argc, argv);
@@ -289,8 +337,6 @@ int main(int argc, char *argv[])
     }
 
     QQmlApplicationEngine engine;
-    // For screenshots: every grid can see it; the first with rows takes it.
-    engine.rootContext()->setContextProperty(QStringLiteral("startupCells"), cli.value(selectCells));
     engine.setInitialProperties({
         { QStringLiteral("startupFile"),   cli.positionalArguments().value(0) },
         { QStringLiteral("startupSample"), cli.isSet(sample) || cli.isSet(openSample) },

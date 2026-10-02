@@ -67,7 +67,7 @@ jobs:
         if: failure()
         shell: python
         run: |
-          import pathlib, re, shlex, subprocess
+          import os, pathlib, re, shlex, subprocess
           log = pathlib.Path("build/Testing/Temporary/LastTest.log")
           text = log.read_text(errors="replace") if log.exists() else "No LastTest.log: the tests never ran."
           # One block per test: keep the ones that didn't pass.
@@ -88,7 +88,9 @@ jobs:
                       report = pathlib.Path(f"{name.group(1) if name else 'test'}-report.txt").resolve()
                       if not any(a.startswith("--") for a in args[1:]):
                           args += ["-o", f"{report},txt"]
-                      run = subprocess.run(args,
+                      # As ctest runs the app's tests: without a display.
+                      env = dict(os.environ, QT_QPA_PLATFORM=os.environ.get("QT_QPA_PLATFORM", "offscreen"))
+                      run = subprocess.run(args, env=env,
                                            cwd=directory.group(1) if directory else None,
                                            capture_output=True, text=True, errors="replace", timeout=900)
                       b += f"\n--- run again: exit code {run.returncode} (0x{run.returncode & 0xFFFFFFFF:08X})\n"

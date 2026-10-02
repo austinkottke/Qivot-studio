@@ -156,6 +156,7 @@ Item {
         height: 38
 
         Row {
+            id: toolbarButtons
             anchors.verticalCenter: parent.verticalCenter
             spacing: 10
             SegmentedControl {
@@ -202,8 +203,13 @@ Item {
             onClicked: root.panelOpen = !root.panelOpen
         }
         Text {
-            anchors { right: panelButton.visible ? panelButton.left : parent.right; rightMargin: panelButton.visible ? 12 : 0
+            // Shortened, then gone, when the buttons need the room.
+            anchors { left: toolbarButtons.right; leftMargin: 16
+                      right: panelButton.visible ? panelButton.left : parent.right; rightMargin: panelButton.visible ? 12 : 0
                       verticalCenter: parent.verticalCenter }
+            horizontalAlignment: Text.AlignRight
+            elide: Text.ElideLeft
+            visible: width > 120
             text: !root.database ? ""
                   : root.database.dialect === "sqlserver"
                     ? "Every statement is rolled back · nothing is changed"
@@ -461,12 +467,14 @@ Item {
             height: root.panelTab === "history" && library.history.length ? 36 : 0
             visible: height > 0
             Text {
-                anchors { left: parent.left; leftMargin: 14; verticalCenter: parent.verticalCenter }
+                anchors { left: parent.left; leftMargin: 14; right: clearLink.left; rightMargin: 10; verticalCenter: parent.verticalCenter }
+                elide: Text.ElideRight
                 text: "Click to edit · double-click to run"
                 color: Theme.textTertiary
                 font.pixelSize: Theme.fontSmall
             }
             Text {
+                id: clearLink
                 anchors { right: parent.right; rightMargin: 14; verticalCenter: parent.verticalCenter }
                 text: "Clear"
                 color: Theme.accent

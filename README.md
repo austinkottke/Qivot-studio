@@ -324,14 +324,33 @@ Once changes are allowed, and always shown as SQL before they run:
 
 ## Download
 
-A macOS build (Apple Silicon and Intel) is on the
-[Releases](https://github.com/austinkottke/Qivot-studio/releases) page: open the
-DMG and drag Qivot Studio to Applications. It isn't notarized yet, so the first
-time, right-click the app and choose **Open**. Releases are made by running the
-[Release workflow](https://github.com/austinkottke/Qivot-studio/actions/workflows/release.yml)
-by hand (Run workflow: a version, and whether to publish it).
+Builds for each platform are on the
+[Releases](https://github.com/austinkottke/Qivot-studio/releases) page, with
+Qt and the database drivers' client libraries inside, so SQLite, PostgreSQL and
+MySQL / MariaDB work with nothing else installed:
 
-To make the DMG yourself: `tools/package-macos.sh ~/Qt/6.8.3/macos`.
+| Platform | File | To run it |
+|---|---|---|
+| macOS, Apple Silicon | `Qivot-Studio-<version>-macOS-AppleSilicon.dmg` | Open it and drag Qivot Studio to Applications. It isn't notarized yet: the first time, right-click the app and choose **Open**. |
+| macOS, Intel | `Qivot-Studio-<version>-macOS-Intel.dmg` | The same. |
+| Windows 10 / 11 (x64) | `Qivot-Studio-<version>-Windows-x64.zip` | Unzip it anywhere and run `Qivot Studio.exe`. |
+| Linux (x86-64) | `Qivot-Studio-<version>-Linux-x86_64.AppImage` | `chmod +x` it and run it. Built on Ubuntu 22.04, so it runs there and on anything newer; it uses the computer's own OpenGL, as every desktop has. |
+
+SQL Server needs Microsoft's *ODBC Driver 18 for SQL Server* on the computer
+(on macOS, Qt's ODBC driver needs iODBC, so SQL Server works best from Windows
+and Linux).
+
+Releases are made by running the
+[Release workflow](https://github.com/austinkottke/Qivot-studio/actions/workflows/release.yml)
+by hand (Run workflow: a version, and whether to publish it). Each package is
+checked before it's kept: its drivers must load from inside it, and on Windows
+and Linux it must connect to a real PostgreSQL (and MySQL) server.
+
+To make them yourself, first build Qt's PostgreSQL and MySQL drivers against
+the client libraries you'll bundle (`tools/package/build-sql-drivers.py`), then:
+`tools/package-macos.sh <qt>` (a DMG), `tools/package/package-linux.sh <qt>`
+(an AppImage) or `tools/package/package-windows.py` (a zip). The steps for each
+are in `.github/workflows/release.yml`.
 
 ## Build
 
@@ -386,6 +405,7 @@ ctest --test-dir qivot-studio/build --output-on-failure
 | `--size 1440x900`, `--find <table>`, `--select-row <n>`, `--select-cells <t,l,b,r>`, `--design-demo`, `--design-tab sql`, `--builder-demo`, `--edit-demo`, `--complete-demo`, `--build`, `--wheel <notches>`, `--wheel-pixels <dx,dy>` | for screenshots, demos and tests |
 | `--shot <png>` | save a screenshot and quit |
 | `--smoke` | load and quit; exit 1 if any QML warning was logged (used by CI) |
+| `--list-drivers [--require-drivers QPSQL,QMYSQL] [--try-connect <url>]` | say which database drivers load (and whether each server given connects), without a window; exit 1 if a required one doesn't (used to check the packages) |
 
 ## Connecting to servers
 

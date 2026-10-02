@@ -77,6 +77,10 @@ public:
     qint64  fileSize() const;
     QString error() const { return m_error; }
 
+    /// Whether Qt's SQL driver `name` (QPSQL, QMYSQL, …) is there and loads:
+    /// its plugin found, and the database's client library with it.
+    static bool driverLoads(const QString &name);
+
     /// Which server types this build can connect to: `{ postgres, mysql, sqlserver }`
     /// (each true when Qt's driver for it is installed).
     QVariantMap availableTypes() const;

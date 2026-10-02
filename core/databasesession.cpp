@@ -52,7 +52,7 @@ QString DatabaseSession::dialectName() const
 // Whether a Qt SQL driver actually loads. QSqlDatabase::drivers() lists every
 // plugin file it finds, including ones that can't load because the database's
 // client library is missing (on macOS, Qt's QPSQL without Postgres.app).
-static bool driverLoads(const QString &name)
+bool DatabaseSession::driverLoads(const QString &name)
 {
     if (!QSqlDatabase::drivers().contains(name))
         return false;
