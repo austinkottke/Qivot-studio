@@ -61,6 +61,23 @@ jobs:
         if: failure()
         run: cmake -E cat build/Testing/Temporary/LastTest.log
 
+      # The same, as an annotation on the run: unlike the log, annotations can
+      # be read without signing in to GitHub (in the run's summary, or the API).
+      - name: Annotate failures
+        if: failure()
+        shell: python
+        run: |
+          import pathlib, re
+          log = pathlib.Path("build/Testing/Temporary/LastTest.log")
+          text = log.read_text(errors="replace") if log.exists() else "No LastTest.log: the tests never ran."
+          # One block per test: keep the ones that didn't pass.
+          blocks = re.split(r"\n(?=\d+/\d+ Testing: )", text)
+          failed = [b for b in blocks if "Test Passed." not in b and "Testing:" in b] or [text]
+          for b in failed[:5]:
+              name = re.search(r"Testing: (\S+)", b)
+              body = b[-6000:].replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+              print(f"::error title={name.group(1) if name else 'tests'} failed::{body}")
+
       # A screenshot of the real app on every run, so UI changes are visible in review.
       - name: Screenshot
         if: runner.os == 'macOS'
