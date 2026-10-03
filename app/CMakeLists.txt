@@ -52,14 +52,15 @@ if(QT_VERSION_MAJOR EQUAL 6)
     target_link_libraries(qivot-studio PRIVATE
         Qt6::Gui Qt6::Quick Qt6::QuickControls2
         studiocore studiocoreplugin
-        qivotui qivotuiplugin)
+        qivotui qivotuiplugin
+        qivotcli)
 else()
     # Qt 5: one resource file with both QML modules, laid out as
     # qrc:/qml/QivotStudio/*.qml and qrc:/qml/QivotUI/{qmldir,*.qml}.
     include(${PROJECT_SOURCE_DIR}/compat/qt5/qmlresources.cmake)
     studio_qt5_resources(${CMAKE_CURRENT_BINARY_DIR}/studio_qml.qrc)
     add_executable(qivot-studio main.cpp ${CMAKE_CURRENT_BINARY_DIR}/studio_qml.qrc ${STUDIO_ICON_SOURCES})
-    target_link_libraries(qivot-studio PRIVATE Qt5::Gui Qt5::Quick Qt5::QuickControls2 studiocore)
+    target_link_libraries(qivot-studio PRIVATE Qt5::Gui Qt5::Quick Qt5::QuickControls2 studiocore qivotcli)
 endif()
 
 set_target_properties(qivot-studio PROPERTIES

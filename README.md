@@ -371,6 +371,7 @@ Once changes are allowed, and always shown as SQL before they run:
 ### Also
 
 - **Four sample databases** to try it immediately, one click each from the welcome screen: a bookshop, a university (a circular reference, a table related to itself, a three-column composite key), a company org chart and a music store, 10,000–45,000 rows apiece. The same samples run on PostgreSQL, MySQL and SQL Server with one `docker compose` command ([tools/sample-servers](tools/sample-servers)).
+- **A command line**, [`qivot-cli`](#command-line-qivot-cli): inspect, models, projects, diffs and migrations from scripts and CI.
 - Light and dark mode, following the system.
 
 ## Download
@@ -461,6 +462,51 @@ ctest --test-dir qivot-studio/build --output-on-failure
 | `--smoke` | load and quit; exit 1 if any QML warning was logged (used by CI) |
 | `--list-drivers [--require-drivers QPSQL,QMYSQL] [--try-connect <url>]` | say which database drivers load (and whether each server given connects), without a window; exit 1 if a required one doesn't (used to check the packages) |
 
+## Command line: `qivot-cli`
+
+Studio's engine without the window, for scripts and CI. It is built as
+`build/cli/qivot-cli`, and every package carries it inside the app:
+`qivot-studio cli …` (on macOS, `"Qivot Studio.app/Contents/MacOS/Qivot Studio" cli …`).
+
+A database is a file, `sample:<id>`, a server URL (the password can come from
+`QIVOT_PASSWORD` rather than the URL), or `migrations:<dir>`: an SQLite
+database built by running a folder of migrations.
+
+```bash
+qivot-cli inspect app.db                                  # tables, columns, keys, indexes (--json too)
+qivot-cli models postgres://me@db/shop -o src/models.h    # Qivot model classes, as the C++ tab shows them
+qivot-cli project app.db -o ~/Projects/App                # a buildable Qt project around them
+qivot-cli query app.db "SELECT * FROM book" --format csv  # read-only; table, csv, tsv or json
+qivot-cli diff design.db app.db                           # what differs, and the SQL that makes app.db match
+```
+
+**Migrations**, run by Qivot's `QiMigrator` (a `qivot_migrations` table, checksums,
+a transaction each, a lock on servers):
+
+```bash
+qivot-cli migrate new "add tags" --dir migrations --from design.db   # writes 0003_add_tags.up.sql + .down.sql
+qivot-cli migrate status app.db --dir migrations
+qivot-cli migrate up app.db --dir migrations            # --dry-run prints the SQL instead
+qivot-cli migrate down app.db --dir migrations --to 2
+```
+
+`migrate new` compares the database you want (`--from`, a file you designed in
+Studio, say) with where the migrations have got to so far (`--to`, which defaults
+to `migrations:<dir>`, or a development server), and writes the difference as the
+next migration, with its down step.
+
+**In CI**, `--exit-code` turns differences into exit code 1:
+
+```bash
+qivot-cli migrate status "$DATABASE_URL" --dir migrations --exit-code   # anything pending, or edited after it ran?
+qivot-cli diff migrations:migrations app.db --exit-code                 # does the database match the migrations?
+```
+
+Exit codes: 0 done, 1 differences or pending (with `--exit-code`), 2 failed.
+`qivot-cli --help` lists every option. `diff` and `migrate new` cover tables,
+columns, keys, references and unique constraints; a new table gets its indexes,
+but other index changes, views and triggers aren't compared yet.
+
 ## Connecting to servers
 
 Studio uses Qt's own database drivers, which in turn need each database's client
@@ -498,6 +544,7 @@ database 7.
 | `core/` | `QivotStudio.Core`: opening databases and describing them (`DatabaseSession`), paging any table's rows (`RowsModel`), the diagram layout (`ErLayout`), the SQL console (`QueryModel`), Qivot code generation (`CodeGen`), the designer and its migrations (`SchemaDesign`), the query builder (`QueryBuilder`), column profiles (`TableProfile`), project export (`ProjectExport`), building and testing (`ProjectBuild`), the IDE's files (`Workspace`), the samples (`SampleDatabase`, described once for every database by `SampleSchema`), running scripts (`SqlScript`), CSV/JSON in and out (`DataTransfer`, `CsvImport`), comparing schemas (`SchemaCompare`), diagram pictures (`DiagramExport`), query history (`QueryLibrary`), autocomplete (`SqlCompleter`) and plans (`QueryPlan`). Plain C++ with tests. |
 | `ui/` | `QivotUI`, the first cut of **qivot-ui**: theme tokens (light/dark) and components (`ActionButton`, `Badge`, `Card`, `FilterField`, `NavItem`, `SegmentedControl`, `TextBox`). Kept free of Studio specifics so it can become its own library. |
 | `app/` | The app: `main.cpp` and the screens in `qml/`. |
+| `cli/` | `qivot-cli`: the same engine from the command line (`qivotcli.cpp`; the app runs it as `qivot-studio cli`). |
 | `tests/` | Tests for each of the above, including a migration round trip (apply to a copy, read it back, nothing left to change) and an exported project that really builds and passes its own tests; live-server tests (editing, undo, import, applying designs and plans on PostgreSQL, MySQL and SQL Server); whole-app smoke tests. |
 | `third_party/qivot/` | Qivot, as its single header (`qivot.hpp`; `qivot.cpp` compiles it once). Schema reading comes from its `QiSchema`. Exported projects get the same files. Update with `tools/update-qivot.sh`. |
 

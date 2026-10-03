@@ -10,6 +10,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QUrl>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QSet>
@@ -472,6 +473,22 @@ bool DatabaseSession::openSample(const QString &sampleId)
     m_sampleId = id;
     emit sampleChanged();
     return true;
+}
+
+QVariantMap DatabaseSession::settingsFromUrl(const QString &text)
+{
+    const QUrl url(text);
+    const QString scheme = url.scheme().toLower();
+    const QString type = scheme == QLatin1String("postgres") || scheme == QLatin1String("postgresql") ? QStringLiteral("postgres")
+                       : scheme == QLatin1String("mysql") || scheme == QLatin1String("mariadb")      ? QStringLiteral("mysql")
+                       : scheme == QLatin1String("sqlserver") || scheme == QLatin1String("mssql")    ? QStringLiteral("sqlserver")
+                       : scheme;
+    return { { QStringLiteral("type"), type },
+             { QStringLiteral("host"), url.host() },
+             { QStringLiteral("port"), url.port(0) },
+             { QStringLiteral("database"), url.path().mid(1) },
+             { QStringLiteral("user"), url.userName() },
+             { QStringLiteral("password"), url.password() } };
 }
 
 bool DatabaseSession::allowChanges(bool on)

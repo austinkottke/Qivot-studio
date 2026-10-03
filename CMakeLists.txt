@@ -38,6 +38,7 @@ include(cmake/duckdb.cmake)   # DuckDB's C library, for .duckdb files
 add_subdirectory(core)    # QivotStudio.Core: database logic
 add_subdirectory(ui)      # QivotUI: theme + components (qivot-ui v0)
 add_subdirectory(app)     # the Qivot Studio app
+add_subdirectory(cli)     # qivot-cli: the same, from the command line
 
 enable_testing()
 add_subdirectory(tests)

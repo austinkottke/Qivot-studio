@@ -41,6 +41,9 @@ class SchemaCompare : public QObject {
     /// across kinds most columns differ in type).
     Q_PROPERTY(bool sameDialect READ sameDialect NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
+    /// Tables left out of the comparison on both sides (a migrations
+    /// history table, say). Names match regardless of case.
+    Q_PROPERTY(QStringList ignored READ ignored WRITE setIgnored NOTIFY changed)
 
 public:
     explicit SchemaCompare(QObject *parent = nullptr);
@@ -54,6 +57,8 @@ public:
     QString migration() const { return m_migration; }
     bool sameDialect() const;
     QString error() const { return m_error; }
+    QStringList ignored() const { return m_ignored; }
+    void setIgnored(const QStringList &tables);
 
     /// Write the migration to a .sql file. False (with error()) if it can't.
     Q_INVOKABLE bool saveMigration(const QVariant &fileOrUrl);
@@ -76,6 +81,7 @@ private:
     QStringList m_changes;
     QString m_migration;
     QString m_error;
+    QStringList m_ignored;
 };
 
 #endif // SCHEMACOMPARE_H

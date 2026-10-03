@@ -348,6 +348,25 @@ QVector<const DesignTable *> creationOrder(const QVector<const DesignTable *> &c
     return out;
 }
 
+// Tables that go away in an order where nothing still standing references
+// the one dropped: children before their parents (servers refuse otherwise).
+QVector<const QiTableInfo *> dropOrder(const QVector<const QiTableInfo *> &dropped)
+{
+    QVector<const QiTableInfo *> out, pending = dropped;
+    while (!pending.isEmpty()) {
+        int pick = 0;
+        for (int i = 0; i < pending.size(); ++i) {
+            bool referenced = false;
+            for (const QiTableInfo *other : pending)
+                for (const QiForeignKeyInfo &fk : other->foreignKeys)
+                    referenced = referenced || (other != pending[i] && fk.refTable == pending[i]->name);
+            if (!referenced) { pick = i; break; }
+        }
+        out << pending.takeAt(pick);
+    }
+    return out;
+}
+
 QString constraintName(const QString &prefix, const QString &table, const QStringList &columns)
 {
     return prefix + QLatin1Char('_') + bareName(table) + QLatin1Char('_') + columns.join(QLatin1Char('_'));
@@ -435,7 +454,7 @@ QString Migration::sql(const QVector<QiTableInfo> &original, const QVector<Desig
     // 2. Tables that go away.
     if (!d.droppedTables.isEmpty()) {
         section(QStringLiteral("Tables that go away (and their rows)"));
-        for (const QiTableInfo *t : d.droppedTables)
+        for (const QiTableInfo *t : dropOrder(d.droppedTables))
             out << QStringLiteral("DROP TABLE %1;").arg(qt(t->name, dialect));
     }
 

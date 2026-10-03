@@ -121,6 +121,10 @@ public:
     ///    server (see SshTunnel); host and port are then as that server sees them.
     Q_INVOKABLE bool connectTo(const QVariantMap &settings);
 
+    /// connectTo() settings from a URL: `postgres://user:pass@host:port/database`,
+    /// also mysql:// (mariadb://), sqlserver:// (mssql://) and redis://.
+    static QVariantMap settingsFromUrl(const QString &url);
+
     /// Create sample `id` (default: the bookshop) in the app's data folder —
     /// once, or again when the sample has changed — and open it.
     Q_INVOKABLE bool openSample(const QString &id = QString());

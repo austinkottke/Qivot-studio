@@ -14,11 +14,11 @@ namespace {
 
 // The tables (not views) of a database, with defaults written as SQL text the
 // way the designer compares them, so equal defaults look equal.
-QVector<QiTableInfo> comparable(const DatabaseSession *s)
+QVector<QiTableInfo> comparable(const DatabaseSession *s, const QStringList &ignored)
 {
     QVector<QiTableInfo> out;
     for (QiTableInfo t : s->tableInfos()) {
-        if (t.kind != QiTableInfo::Table)
+        if (t.kind != QiTableInfo::Table || ignored.contains(t.name, Qt::CaseInsensitive))
             continue;
         for (QiColumnInfo &c : t.columns) {
             const QString d = CodeGen::defaultExpression(c.defaultValue, s->dialect());
@@ -67,6 +67,14 @@ void SchemaCompare::setDirection(const QString &direction)
     compute();
 }
 
+void SchemaCompare::setIgnored(const QStringList &tables)
+{
+    if (tables == m_ignored)
+        return;
+    m_ignored = tables;
+    compute();
+}
+
 bool SchemaCompare::sameDialect() const
 {
     return m_session && m_session->isOpen() && m_other->isOpen() && m_session->dialect() == m_other->dialect();
@@ -82,9 +90,9 @@ void SchemaCompare::compute()
         const bool toOther = m_direction == QLatin1String("toOther");
         const DatabaseSession *from = toOther ? m_session.data() : m_other;
         const DatabaseSession *to = toOther ? m_other : m_session.data();
-        const QVector<QiTableInfo> target = comparable(to);
+        const QVector<QiTableInfo> target = comparable(to, m_ignored);
         QVector<DesignTable> design;
-        for (const QiTableInfo &t : comparable(from)) {
+        for (const QiTableInfo &t : comparable(from, m_ignored)) {
             DesignTable d;
             d.info = t;
             const QiTableInfo *match = named(target, t.name);

@@ -41,6 +41,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include "databasesession.h"
+#include "qivotcli.h"
 #include "projectexport.h"
 #include "sampledatabase.h"
 #include "sampleschema.h"
@@ -73,23 +74,6 @@ Q_IMPORT_QML_PLUGIN(QivotUIPlugin)
 #endif
 
 namespace {
-// postgres://user:pass@host:port/database  ->  DatabaseSession::connectTo() settings.
-QVariantMap parseConnectUrl(const QString &text)
-{
-    const QUrl url(text);
-    const QString scheme = url.scheme().toLower();
-    const QString type = scheme == QLatin1String("postgres") || scheme == QLatin1String("postgresql") ? QStringLiteral("postgres")
-                       : scheme == QLatin1String("mysql") || scheme == QLatin1String("mariadb")      ? QStringLiteral("mysql")
-                       : scheme == QLatin1String("sqlserver") || scheme == QLatin1String("mssql")    ? QStringLiteral("sqlserver")
-                       : scheme;
-    return { { QStringLiteral("type"), type },
-             { QStringLiteral("host"), url.host() },
-             { QStringLiteral("port"), url.port(0) },
-             { QStringLiteral("database"), url.path().mid(1) },
-             { QStringLiteral("user"), url.userName() },
-             { QStringLiteral("password"), url.password() } };
-}
-
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
 // Qt 5 has no generated type registration: register QivotStudio.Core here.
 // QivotUI and the screens come from the resource file (compat/qt5/).
@@ -165,7 +149,7 @@ static int listDrivers(int argc, char *argv[])
     for (int i = 0; i + 1 < args.size(); ++i) {
         if (args.at(i) != QLatin1String("--try-connect"))
             continue;
-        const QVariantMap s = parseConnectUrl(args.at(i + 1));
+        const QVariantMap s = DatabaseSession::settingsFromUrl(args.at(i + 1));
         DatabaseSession db;
         const QString where = s.value(QStringLiteral("type")).toString() + QStringLiteral(" ")
                               + s.value(QStringLiteral("host")).toString() + QLatin1Char('/') + s.value(QStringLiteral("database")).toString();
@@ -180,8 +164,22 @@ static int listDrivers(int argc, char *argv[])
     return missing ? 1 : 0;
 }
 
+// qivot-studio cli <command> …: qivot-cli from the app's own package (the
+// DMG, the zip and the AppImage carry one program), with no window.
+static int runCli(int argc, char *argv[])
+{
+    QCoreApplication app(argc, argv);
+    app.setApplicationName(QStringLiteral("Qivot Studio"));
+    app.setOrganizationName(QStringLiteral("Qivot"));
+    app.setApplicationVersion(QStringLiteral(PROJECT_VERSION_STRING));
+    QTextStream out(stdout), err(stderr);
+    return QivotCli::run(app.arguments().mid(2), out, err);
+}
+
 int main(int argc, char *argv[])
 {
+    if (argc > 1 && qstrcmp(argv[1], "cli") == 0)
+        return runCli(argc, argv);
     for (int i = 1; i < argc; ++i)
         if (qstrcmp(argv[i], "--list-drivers") == 0)
             return listDrivers(argc, argv);
@@ -311,7 +309,7 @@ int main(int argc, char *argv[])
 
     if (cli.isSet(models) || cli.isSet(exportTo)) {
         DatabaseSession db;
-        const QVariantMap server = cli.isSet(connect) ? parseConnectUrl(cli.value(connect)) : QVariantMap();
+        const QVariantMap server = cli.isSet(connect) ? DatabaseSession::settingsFromUrl(cli.value(connect)) : QVariantMap();
         const bool opened = !server.isEmpty() ? db.connectTo(server)
                           : cli.isSet(sample) || cli.isSet(openSample) ? db.openSample(cli.value(openSample))
                           : db.open(cli.positionalArguments().value(0));
@@ -372,7 +370,7 @@ int main(int argc, char *argv[])
         { QStringLiteral("rememberConnections"), !cli.isSet(shot) && !cli.isSet(smoke) && !cli.isSet(size) },
         { QStringLiteral("startupRow"),    cli.isSet(selectRow) ? cli.value(selectRow).toInt() - 1 : -1 },
         { QStringLiteral("startupConnection"),
-          cli.isSet(connect) ? QVariant(parseConnectUrl(cli.value(connect))) : QVariant(QVariantMap()) },
+          cli.isSet(connect) ? QVariant(DatabaseSession::settingsFromUrl(cli.value(connect))) : QVariant(QVariantMap()) },
     });
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     engine.loadFromModule("QivotStudio", "Main");

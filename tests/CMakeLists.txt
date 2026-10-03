@@ -14,6 +14,16 @@ add_executable(tst_querymodel tst_querymodel.cpp)
 target_link_libraries(tst_querymodel PRIVATE Qt::Test studiocore)
 add_test(NAME querymodel COMMAND tst_querymodel)
 
+add_executable(tst_cli tst_cli.cpp)
+target_link_libraries(tst_cli PRIVATE Qt::Test qivotcli)
+add_test(NAME cli COMMAND tst_cli)
+# And the program itself.
+add_test(NAME cli_help COMMAND qivot-cli --help)
+set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "migrate status")
+# The same from the app: qivot-studio cli …
+add_test(NAME app_cli COMMAND qivot-studio cli inspect sample:bookshop --table book)
+set_tests_properties(app_cli PROPERTIES PASS_REGULAR_EXPRESSION "author_id +INTEGER")
+
 add_executable(tst_codegen tst_codegen.cpp)
 target_link_libraries(tst_codegen PRIVATE Qt::Test studiocore)
 add_test(NAME codegen COMMAND tst_codegen)
