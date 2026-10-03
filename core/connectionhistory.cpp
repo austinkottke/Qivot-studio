@@ -32,7 +32,7 @@ void ConnectionHistory::store()
 QString ConnectionHistory::idOf(const QVariantMap &s)
 {
     const QString type = s.value(QStringLiteral("type")).toString();
-    if (type == QLatin1String("sqlite"))
+    if (type == QLatin1String("sqlite") || type == QLatin1String("duckdb"))
         return QStringLiteral("file:") + QFileInfo(s.value(QStringLiteral("path")).toString()).absoluteFilePath();
     const QVariantMap ssh = s.value(QStringLiteral("ssh")).toMap();
     QString id = QStringLiteral("%1:%2@%3:%4/%5")
@@ -130,7 +130,7 @@ QVariantMap ConnectionHistory::decorate(const QVariantMap &stored) const
     const QString type = s.value(QStringLiteral("type")).toString();
     const QString label = e.value(QStringLiteral("label")).toString();
     QString title, detail;
-    if (type == QLatin1String("sqlite")) {
+    if (type == QLatin1String("sqlite") || type == QLatin1String("duckdb")) {
         const QFileInfo fi(s.value(QStringLiteral("path")).toString());
         title = fi.fileName();
         detail = fi.absolutePath();

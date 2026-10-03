@@ -3,8 +3,12 @@
 #include "sampledatabase.h"
 #include "diagramdata.h"
 #include "sshtunnel.h"
+#ifdef STUDIO_HAS_DUCKDB
+#include "duckdbdriver.h"
+#endif
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -27,6 +31,14 @@ DatabaseSession::DatabaseSession(QObject *parent)
     : QObject(parent)
     , m_connection(QStringLiteral("studio_%1").arg(reinterpret_cast<quintptr>(this), 0, 16))
 {
+#ifdef STUDIO_HAS_DUCKDB
+    // Qt ships no DuckDB driver: Qivot's, registered once for every session.
+    static const bool registered = [] {
+        QSqlDatabase::registerSqlDriver(QStringLiteral("QDUCKDB"), new QSqlDriverCreator<DuckDbDriver>());
+        return true;
+    }();
+    Q_UNUSED(registered);
+#endif
 }
 
 DatabaseSession::~DatabaseSession()
@@ -146,6 +158,7 @@ QVariantMap DatabaseSession::availableTypes() const
         { QStringLiteral("postgres"),  driverLoads(QStringLiteral("QPSQL")) },
         { QStringLiteral("mysql"),     driverLoads(QStringLiteral("QMYSQL")) || driverLoads(QStringLiteral("QMARIADB")) },
         { QStringLiteral("sqlserver"), driverLoads(QStringLiteral("QODBC")) },
+        { QStringLiteral("duckdb"),    driverLoads(QStringLiteral("QDUCKDB")) },
     };
     return types;
 }
@@ -199,6 +212,9 @@ bool DatabaseSession::open(const QVariant &fileOrUrl)
         return false;
     }
 
+    if (isDuckDbFile(path))
+        return openDuckDb(path);
+
     close();
     QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), m_connection);
     db.setDatabaseName(path);
@@ -235,6 +251,52 @@ bool DatabaseSession::open(const QVariant &fileOrUrl)
         return false;
     }
     return true;
+}
+
+bool DatabaseSession::isDuckDbFile(const QString &path)
+{
+    // DuckDB's files say so in their header ("DUCK" from byte 8); the usual
+    // extensions are enough for one that's empty or new.
+    QFile f(path);
+    if (f.open(QIODevice::ReadOnly)) {
+        const QByteArray head = f.read(12);
+        if (head.size() == 12 && head.mid(8, 4) == "DUCK")
+            return true;
+    }
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    return suffix == QLatin1String("duckdb") || suffix == QLatin1String("ddb");
+}
+
+bool DatabaseSession::openDuckDb(const QString &path)
+{
+#ifdef STUDIO_HAS_DUCKDB
+    close();
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QDUCKDB"), m_connection);
+    db.setDatabaseName(path);
+    db.setConnectOptions(QStringLiteral("DUCKDB_OPEN_READONLY"));     // as SQLite files are: read-only
+    if (!db.open()) {
+        setError(tr("Couldn't open %1: %2").arg(QFileInfo(path).fileName(), db.lastError().text()));
+        db = QSqlDatabase();
+        discard();
+        return false;
+    }
+    m_path = path;
+    m_displayName = QFileInfo(path).fileName();
+    m_settings = { { QStringLiteral("type"), QStringLiteral("duckdb") },
+                   { QStringLiteral("path"), QFileInfo(path).absoluteFilePath() } };
+    m_location = QFileInfo(path).absolutePath();
+    m_readOnly = true;
+    if (!load(db)) {
+        db = QSqlDatabase();
+        close();
+        return false;
+    }
+    return true;
+#else
+    setError(tr("%1 is a DuckDB database, and this build of Studio doesn't include DuckDB.")
+                 .arg(QFileInfo(path).fileName()));
+    return false;
+#endif
 }
 
 bool DatabaseSession::connectTo(const QVariantMap &settings)
@@ -423,6 +485,11 @@ bool DatabaseSession::allowChanges(bool on)
     if (!m_open)
         return false;
     const QString type = m_settings.value(QStringLiteral("type")).toString();
+    if (type == QLatin1String("duckdb")) {
+        // DuckDB lets one process hold a file read-only or read-write, not both.
+        setError(tr("Changing DuckDB files isn't supported yet: %1 stays read-only.").arg(m_displayName));
+        return false;
+    }
     QSqlDatabase db;
     if (type == QLatin1String("sqlite")) {
         if (!QFileInfo(m_path).isWritable()) {

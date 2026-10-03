@@ -36,6 +36,41 @@ void shares(QVariantList &nodes)
     }
 }
 
+// ---- DuckDB: EXPLAIN (FORMAT json), a tree of operators ----
+void duckNode(const QJsonObject &p, int depth, QVariantList &out)
+{
+    const QString name = p.value(QStringLiteral("name")).toString().trimmed();
+    QString table;
+    double rows = -1;
+    QStringList detail;
+    const QJsonValue info = p.value(QStringLiteral("extra_info"));
+    if (info.isObject()) {
+        const QJsonObject o = info.toObject();
+        for (auto it = o.begin(); it != o.end(); ++it) {
+            const QString text = it.value().isArray()
+                ? [&] { QStringList parts; for (const QJsonValue &x : it.value().toArray()) parts << x.toString(); return parts.join(QStringLiteral(", ")); }()
+                : it.value().toVariant().toString();
+            if (it.key() == QLatin1String("Table"))
+                table = text.section(QLatin1Char('.'), -1);      // "file.main.book": the table is book
+            else if (it.key() == QLatin1String("Estimated Cardinality"))
+                rows = text.toDouble();
+            else if (!text.trimmed().isEmpty())
+                detail << it.key() + QStringLiteral(": ") + text.simplified();
+        }
+    } else if (info.isString() && !info.toString().trimmed().isEmpty()) {
+        detail << info.toString().simplified();
+    }
+    if (!table.isEmpty())
+        detail.prepend(QStringLiteral("on ") + table);
+    // A column store reads whole tables as a matter of course; it's one with no
+    // filter at all that reads every row.
+    const bool scan = name.contains(QLatin1String("SCAN")) && !table.isEmpty()
+                      && !(info.isObject() && info.toObject().contains(QStringLiteral("Filters")));
+    out << node(depth, name, detail.join(QStringLiteral(" · ")), table, rows, -1, scan);
+    for (const QJsonValue &c : p.value(QStringLiteral("children")).toArray())
+        duckNode(c.toObject(), depth + 1, out);
+}
+
 // ---- PostgreSQL ----
 void pgNode(const QJsonObject &p, int depth, QVariantList &out)
 {
@@ -90,6 +125,17 @@ QVariantList QueryPlan::fromSqlite(const QList<QVariantList> &rows)
         out << node(depth, word.isEmpty() ? detail : word, rest, table.match(detail).captured(1), -1, -1,
                     scan.match(detail).hasMatch());
     }
+    return out;
+}
+
+QVariantList QueryPlan::fromDuckDbJson(const QString &json)
+{
+    QVariantList out;
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+    const QJsonArray top = doc.isArray() ? doc.array() : QJsonArray{ doc.object() };
+    for (const QJsonValue &v : top)
+        if (v.isObject())
+            duckNode(v.toObject(), 0, out);
     return out;
 }
 
@@ -263,6 +309,11 @@ bool QueryPlan::explain(const QString &sqlIn)
             }
             m_raw = text.join(QLatin1Char('\n'));
         }
+    } else if (dialect == QLatin1String("duckdb")) {
+        if (!q.exec(QStringLiteral("EXPLAIN (FORMAT json) ") + sql) || !q.next())
+            return failed(q);
+        m_raw = q.value(q.record().count() - 1).toString();     // explain_key, explain_value
+        m_nodes = fromDuckDbJson(m_raw);
     } else if (dialect == QLatin1String("sqlserver")) {
         // The plan instead of the rows, for this one statement. Forward-only:
         // the ODBC driver's scrollable cursor can't hold a showplan result.

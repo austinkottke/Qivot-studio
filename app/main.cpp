@@ -140,6 +140,7 @@ void countingHandler(QtMsgType type, const QMessageLogContext &context, const QS
 static int listDrivers(int argc, char *argv[])
 {
     QCoreApplication app(argc, argv);
+    const DatabaseSession registersDrivers;     // the drivers Studio adds itself (DuckDB)
     QStringList required;
     const QStringList args = app.arguments();
     const int at = args.indexOf(QStringLiteral("--require-drivers"));
@@ -147,7 +148,7 @@ static int listDrivers(int argc, char *argv[])
         required = args.at(at + 1).split(QLatin1Char(','), Qt::SkipEmptyParts);
     QTextStream out(stdout);
     int missing = 0;
-    for (const QString &name : QStringList{ "QSQLITE", "QPSQL", "QMYSQL", "QMARIADB", "QODBC" }) {
+    for (const QString &name : QStringList{ "QSQLITE", "QDUCKDB", "QPSQL", "QMYSQL", "QMARIADB", "QODBC" }) {
         const bool listed = QSqlDatabase::drivers().contains(name);
         const bool loads = listed && DatabaseSession::driverLoads(name);
         out << name << ": " << (loads ? "loads" : listed ? "found, but doesn't load" : "not here") << '\n';
@@ -348,7 +349,7 @@ int main(int argc, char *argv[])
         { QStringLiteral("startupExplain"), cli.isSet(explainOption) },
         { QStringLiteral("startupCompleteDemo"), cli.isSet(completeDemo) },
         { QStringLiteral("startupTable"),  cli.value(table) },
-        { QStringLiteral("detailTab"),     cli.value(view) == QLatin1String("data") ? 1
+        { QStringLiteral("startupDetailTab"), cli.value(view) == QLatin1String("data") ? 1
                                          : cli.value(view) == QLatin1String("profile") ? 2
                                          : cli.value(view) == QLatin1String("cpp") ? 3 : 0 },
         { QStringLiteral("startupView"),   cli.isSet(queryText) || cli.isSet(queryBuilder) || cli.isSet(builderDemo) ? QStringLiteral("query") : cli.value(view) },

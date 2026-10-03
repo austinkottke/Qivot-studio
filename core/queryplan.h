@@ -11,7 +11,8 @@
 /// How the database would run a query — without running it — as a tree of
 /// steps, the same shape for every database.
 /**
-  SQLite: EXPLAIN QUERY PLAN. PostgreSQL: EXPLAIN (FORMAT JSON). MySQL:
+  SQLite: EXPLAIN QUERY PLAN. PostgreSQL: EXPLAIN (FORMAT JSON). DuckDB:
+  EXPLAIN (FORMAT json). MySQL:
   EXPLAIN FORMAT=TREE (or the classic table on MariaDB and older MySQL).
   SQL Server: SHOWPLAN_XML. None of them runs the query.
 
@@ -50,6 +51,7 @@ public:
     /// The parsers, for tests: each turns the database's output into nodes.
     static QVariantList fromSqlite(const QList<QVariantList> &rows);       // id, parent, notused, detail
     static QVariantList fromPostgresJson(const QString &json);
+    static QVariantList fromDuckDbJson(const QString &json);
     static QVariantList fromMysqlTree(const QString &tree);
     static QVariantList fromSqlServerXml(const QString &xml);
 

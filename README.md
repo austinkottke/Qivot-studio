@@ -1,6 +1,6 @@
 <h1 align="center">Qivot Studio</h1>
 
-<p align="center"><strong>Explore, design and code against any database: SQLite, PostgreSQL, MySQL and SQL Server.</strong></p>
+<p align="center"><strong>Explore, design and code against any database: SQLite, DuckDB, PostgreSQL, MySQL and SQL Server.</strong></p>
 
 <p align="center">
   <a href="https://github.com/austinkottke/Qivot-studio/actions/workflows/build.yml"><img src="https://github.com/austinkottke/Qivot-studio/actions/workflows/build.yml/badge.svg" alt="Build"></a>
@@ -213,11 +213,15 @@ into Qivot C++ that you can build, test and run without leaving Studio.
 
 ### Analyze
 
-- **SQLite files, or a server**: PostgreSQL, MySQL / MariaDB and SQL Server,
+- **SQLite and DuckDB files, or a server**: PostgreSQL, MySQL / MariaDB and SQL Server,
   directly or **through an SSH tunnel**, with each one's **TLS** settings
   (PostgreSQL's `sslmode` and certificates, MySQL's CA and client
   certificates, SQL Server's Encrypt / Strict). Tables in other schemas are
   listed as `schema.table`.
+- **Several databases at once**, a tab each (⌘N for another): each keeps its own
+  place, screens, query tabs and results while you switch between them.
+- **DuckDB files** open read-only like SQLite ones, recognised by their header:
+  structure, keys and views, data, profiles, queries and DuckDB's own plans.
 - **Saved and recent connections** on the welcome screen: files open with a
   click, servers fill in the Connect dialog. Star one to keep it. Passwords
   are never stored.
@@ -332,7 +336,7 @@ Once changes are allowed, and always shown as SQL before they run:
 
 Builds for each platform are on the
 [Releases](https://github.com/austinkottke/Qivot-studio/releases) page, with
-Qt and the database drivers' client libraries inside, so SQLite, PostgreSQL and
+Qt and the database drivers' client libraries inside, so SQLite, DuckDB, PostgreSQL and
 MySQL / MariaDB work with nothing else installed:
 
 | Platform | File | To run it |
@@ -362,7 +366,10 @@ are in `.github/workflows/release.yml`.
 
 Needs Qt 6.5 or newer (6.8 recommended), or Qt 5.15, and CMake 3.21+. Point
 `CMAKE_PREFIX_PATH` at whichever Qt you have; the build picks Qt 6 when both are found. Qivot is included, as
-its single header in `third_party/qivot`:
+its single header in `third_party/qivot`, with its DuckDB driver. DuckDB's C
+library is downloaded for your platform the first time you configure (into the
+build folder); `-DDUCKDB_ROOT=<unzipped libduckdb release>` uses one you have, and
+`-DSTUDIO_DUCKDB=OFF` builds without DuckDB:
 
 ```bash
 git clone https://github.com/austinkottke/Qivot-studio.git qivot-studio
@@ -453,8 +460,9 @@ test is skipped unless its `STUDIO_TEST_PG` / `STUDIO_TEST_MYSQL` /
 
 ## Roadmap
 
-1. **Analyzer**: DuckDB files; keyboard navigation in the query builder;
-   PostgreSQL and MySQL drivers bundled in the macOS app.
+1. **Analyzer**: changes to DuckDB files; Redis; Redshift, ClickHouse,
+   Snowflake, Oracle and DB2 (through Qivot); keyboard navigation in the
+   query builder.
 2. **Designer**: send a design's models to an exported project, reorder
    columns by dragging.
 3. **IDE**: go to definition, find in files, build kits.

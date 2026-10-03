@@ -105,8 +105,11 @@ public:
     /// `{ name, kind: "table"|"view"|"virtual", rows, columns }`.
     QVariantList tables() const;
 
-    /// Open an SQLite file (a `file:` URL or a plain path), read-only.
+    /// Open an SQLite or DuckDB file (a `file:` URL or a plain path), read-only.
     Q_INVOKABLE bool open(const QVariant &fileOrUrl);
+
+    /// Whether `path` is a DuckDB database (by its header, or its extension).
+    static bool isDuckDbFile(const QString &path);
 
     /// Connect to a server: `{ type: "postgres"|"mysql"|"sqlserver", host, port,
     /// database, user, password, ssl?, ssh? }`. port may be omitted for the usual one.
@@ -181,6 +184,7 @@ signals:
 private:
     void setError(const QString &message);
     bool load(QSqlDatabase db);            // read the structure; becomes the open database
+    bool openDuckDb(const QString &path);
     void discard();                        // drop a connection that failed part-way
     void closeWriter();
     QString writeConnectionName() const { return m_connection + QStringLiteral("_write"); }

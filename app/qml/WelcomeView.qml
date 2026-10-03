@@ -62,7 +62,7 @@ Rectangle {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            text: "Explore any database: SQLite, PostgreSQL, MySQL and SQL Server. Tables, keys, relationships and data."
+            text: "Explore any database: SQLite, DuckDB, PostgreSQL, MySQL and SQL Server. Tables, keys, relationships and data."
             color: Theme.textSecondary
             font.pixelSize: Theme.fontHeading
         }
@@ -79,7 +79,7 @@ Rectangle {
         Item { width: 1; height: 18 }
         Text {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: "or drop a .db file anywhere in this window · files open read-only"
+            text: "or drop a database file (SQLite or DuckDB) anywhere in this window · files open read-only"
             color: Theme.textTertiary
             font.pixelSize: Theme.fontSmall + 1
         }
@@ -127,7 +127,7 @@ Rectangle {
                         Text {
                             anchors.centerIn: parent
                             text: { const t = modelData.settings.type
-                                    return t === "postgres" ? "PG" : t === "mysql" ? "MY" : t === "sqlserver" ? "MS" : "DB" }
+                                    return t === "postgres" ? "PG" : t === "mysql" ? "MY" : t === "sqlserver" ? "MS" : t === "duckdb" ? "DK" : "DB" }
                             color: modelData.kind === "file" ? Theme.textSecondary : Theme.accent
                             font.pixelSize: 10; font.weight: Font.Bold
                         }

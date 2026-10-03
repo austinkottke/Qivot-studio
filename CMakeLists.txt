@@ -33,6 +33,8 @@ if(NOT MSVC)
     target_compile_options(qivot PUBLIC -Wno-invalid-offsetof)
 endif()
 
+include(cmake/duckdb.cmake)   # DuckDB's C library, for .duckdb files
+
 add_subdirectory(core)    # QivotStudio.Core: database logic
 add_subdirectory(ui)      # QivotUI: theme + components (qivot-ui v0)
 add_subdirectory(app)     # the Qivot Studio app

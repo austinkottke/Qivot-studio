@@ -3,13 +3,15 @@ import QtQuick.Controls 2.15
 import QivotUI 1.0
 import QivotStudio.Core 1.0
 
+/// The window: a tab per open database (each a DatabasePane, which keeps its
+/// own screens and place), and a new tab starts on the welcome screen.
 ApplicationWindow {
     id: win
     width: 1180; height: 760
     minimumWidth: 860; minimumHeight: 520
     visible: true
     color: Theme.window
-    title: db.isOpen ? db.displayName + " — Qivot Studio" : "Qivot Studio"
+    title: current && current.db.isOpen ? current.db.displayName + " — Qivot Studio" : "Qivot Studio"
 
     // Set by main.cpp from the command line.
     property string startupFile: ""
@@ -37,56 +39,171 @@ ApplicationWindow {
     signal buildFinished()                   // --build: --shot waits for this
     property string startupFind: ""          // from --find
     property int startupRow: -1              // from --select-row
+    property int startupDetailTab: 0         // --view data / profile / cpp: which tab of a table
     property bool screenshotMode: false      // --shot: ignore the real pointer
     property bool rememberConnections: true  // off for screenshots and tests: they don't add to Recent
 
-    property string view: "diagram"            // "diagram", "query", or "table"
-    property string selectedTable: ""
-    property int detailTab: 0             // Structure or Data; kept as you move between tables
+    // ---- Tabs: one pane per database ----
+    ListModel { id: tabs }                     // { uid }
+    property int currentIndex: 0
+    property int nextUid: 1
+    readonly property var current: paneRepeater.count > currentIndex ? paneRepeater.itemAt(currentIndex) : null
+    Component.onCompleted: tabs.append({ uid: nextUid++ })
 
-    Database {
-        id: db
-        onOpenChanged: {
-            if (isOpen && win.startupAllowChanges) { win.startupAllowChanges = false; allowChanges(true) }
-            // Recent, for the welcome screen (a sample says it's one just after opening).
-            if (isOpen && !refreshing && win.rememberConnections)
-                Qt.callLater(function () { if (db.isOpen && !db.sampleId.length) ConnectionHistory.remember(db.connectionSettings) })
-            // A refresh after a change: stay where we are.
-            if (refreshing) {
-                if (win.selectedTable.length && table(win.selectedTable).name === undefined)
-                    win.selectedTable = win.firstTable()
-                return
+    function newTab() {
+        tabs.append({ uid: nextUid++ })
+        currentIndex = tabs.count - 1
+    }
+    function closeTab(i) {
+        const p = paneRepeater.itemAt(i)
+        if (tabs.count <= 1) { if (p) p.db.close(); return }      // the last tab stays, on the welcome screen
+        tabs.remove(i)
+        if (currentIndex >= tabs.count) currentIndex = tabs.count - 1
+        else if (i < currentIndex) currentIndex--
+    }
+    function showConnectDialog() { if (current) current.showConnectDialog() }   // --connect-dialog
+
+    Shortcut { sequence: "Ctrl+N"; onActivated: win.newTab() }
+    Shortcut { sequence: "Ctrl+Shift+]"; onActivated: win.currentIndex = (win.currentIndex + 1) % tabs.count }
+    Shortcut { sequence: "Ctrl+Shift+["; onActivated: win.currentIndex = (win.currentIndex + tabs.count - 1) % tabs.count }
+
+    // Shown once there's something to switch between.
+    readonly property bool showTabs: tabs.count > 1 || (current !== null && current.db.isOpen)
+    Rectangle {
+        id: tabStrip
+        anchors { left: parent.left; right: parent.right; top: parent.top }
+        height: win.showTabs ? 36 : 0
+        visible: win.showTabs
+        color: Theme.surfaceRaised
+        Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: Theme.separator }
+        Flickable {
+            anchors { left: parent.left; leftMargin: 8; right: addButton.left; rightMargin: 6; top: parent.top; bottom: parent.bottom }
+            contentWidth: tabRow.width
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.HorizontalFlick
+            Row {
+                id: tabRow
+                height: parent.height
+                spacing: 2
+                Repeater {
+                    model: tabs
+                    Rectangle {
+                        id: chip
+                        readonly property var p: paneRepeater.count > index ? paneRepeater.itemAt(index) : null
+                        readonly property bool on: index === win.currentIndex
+                        readonly property string dialect: p && p.db.isOpen ? p.db.dialect : ""
+                        y: 4
+                        height: 28
+                        width: Math.min(240, label.implicitWidth + badge.width + 52)
+                        radius: 7
+                        color: on ? Theme.window : chipMouse.containsMouse ? Theme.hover : "transparent"
+                        border.width: on ? 1 : 0
+                        border.color: Theme.separator
+                        Rectangle {
+                            id: badge
+                            x: 8; anchors.verticalCenter: parent.verticalCenter
+                            width: chip.dialect.length ? 24 : 0; height: 16; radius: 4
+                            visible: width > 0
+                            color: chip.dialect === "sqlite" ? Theme.surface : Theme.accentSoft
+                            Text {
+                                anchors.centerIn: parent
+                                text: chip.dialect === "postgres" ? "PG" : chip.dialect === "mysql" ? "MY"
+                                    : chip.dialect === "sqlserver" ? "MS" : chip.dialect === "duckdb" ? "DK" : "DB"
+                                color: chip.dialect === "sqlite" ? Theme.textSecondary : Theme.accent
+                                font.pixelSize: 9; font.weight: Font.Bold
+                            }
+                        }
+                        Text {
+                            id: label
+                            anchors { left: badge.right; leftMargin: badge.visible ? 7 : 4; verticalCenter: parent.verticalCenter }
+                            width: Math.min(implicitWidth, 170)
+                            text: chip.p && chip.p.db.isOpen ? chip.p.db.displayName : "New tab"
+                            color: chip.on ? Theme.text : Theme.textSecondary
+                            font.pixelSize: Theme.fontBody
+                            font.weight: chip.on ? Font.DemiBold : Font.Normal
+                            elide: Text.ElideRight
+                        }
+                        MouseArea {
+                            id: chipMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                            onClicked: function (mouse) {
+                                if (mouse.button === Qt.MiddleButton) win.closeTab(index)
+                                else win.currentIndex = index
+                            }
+                        }
+                        HoverHandler { id: chipHover }
+                        ToolTip.visible: chipHover.hovered && chip.p && chip.p.db.isOpen; ToolTip.delay: 700
+                        ToolTip.text: chip.p && chip.p.db.isOpen ? chip.p.db.dialectName + " · " + chip.p.db.location : ""
+                        Rectangle {
+                            anchors { right: parent.right; rightMargin: 6; verticalCenter: parent.verticalCenter }
+                            width: 18; height: 18; radius: 4
+                            visible: chipMouse.containsMouse || closeMouse.containsMouse || chip.on
+                            color: closeMouse.containsMouse ? Theme.hover : "transparent"
+                            Rectangle { anchors.centerIn: parent; width: 8; height: 1.4; color: Theme.textSecondary; rotation: 45 }
+                            Rectangle { anchors.centerIn: parent; width: 8; height: 1.4; color: Theme.textSecondary; rotation: -45 }
+                            MouseArea { id: closeMouse; anchors.fill: parent; hoverEnabled: true; onClicked: win.closeTab(index) }
+                        }
+                    }
+                }
             }
-            const wanted = win.startupTable
-            win.startupTable = ""                    // only for the first file opened
-            win.selectedTable = !isOpen ? ""
-                              : (wanted.length && table(wanted).name !== undefined) ? wanted
-                              : win.firstTable()
-            // A freshly opened database starts on the bird's-eye view, unless a table was asked for.
-            win.view = win.startupView === "query" || win.startupView === "export" || win.startupView === "design"
-                       || win.startupView === "samples" || win.startupView === "compare"
-                       || win.startupProject.length
-                       ? (win.startupProject.length ? "export" : win.startupView)
-                     : wanted.length && win.startupView !== "diagram" ? "table" : "diagram"
+        }
+        ActionButton {
+            id: addButton
+            anchors { right: parent.right; rightMargin: 8; verticalCenter: parent.verticalCenter }
+            text: "+"
+            implicitHeight: 26
+            onClicked: win.newTab()
+            HoverHandler { id: addHover }
+            ToolTip.visible: addHover.hovered; ToolTip.delay: 600
+            ToolTip.text: "Open another database (⌘N)"
         }
     }
 
-    // The first real table (not a view), so a freshly opened file shows something useful.
-    function firstTable() {
-        for (let t of db.tables)
-            if (t.kind === "table") return t.name
-        return db.tables.length ? db.tables[0].name : ""
+    // ---- The panes: only the current one shows ----
+    Item {
+        anchors { left: parent.left; right: parent.right; top: tabStrip.bottom; bottom: parent.bottom }
+        Repeater {
+            id: paneRepeater
+            model: tabs
+            DatabasePane {
+                anchors.fill: parent
+                visible: index === win.currentIndex
+                // The command line is for the first one.
+                readonly property bool first: index === 0 && model.uid === 1
+                startupFile: first ? win.startupFile : ""
+                startupConnection: first ? win.startupConnection : ({})
+                startupSample: first && win.startupSample
+                startupSampleId: first ? win.startupSampleId : ""
+                startupAllowChanges: first && win.startupAllowChanges
+                startupEditDemo: first && win.startupEditDemo
+                startupCompare: first ? win.startupCompare : ""
+                startupExportDiagram: first ? win.startupExportDiagram : ""
+                startupExplain: first && win.startupExplain
+                startupCompleteDemo: first && win.startupCompleteDemo
+                startupTable: first ? win.startupTable : ""
+                startupView: first ? win.startupView : ""
+                startupQuery: first ? win.startupQuery : ""
+                startupQueryBuilder: first && win.startupQueryBuilder
+                startupBuilderDemo: first && win.startupBuilderDemo
+                startupBuild: first && win.startupBuild
+                projectsDir: win.projectsDir
+                startupProject: first ? win.startupProject : ""
+                startupDesignDemo: first && win.startupDesignDemo
+                startupDesignTab: first ? win.startupDesignTab : ""
+                startupDesignMenu: first ? win.startupDesignMenu : ""
+                startupDesignTable: first ? win.startupDesignTable : ""
+                startupFind: first ? win.startupFind : ""
+                startupRow: first ? win.startupRow : -1
+                detailTab: first ? win.startupDetailTab : 0
+                screenshotMode: win.screenshotMode
+                rememberConnections: win.rememberConnections
+                onBuildFinished: win.buildFinished()
+            }
+        }
     }
-
-    Component.onCompleted: {
-        if (startupConnection.type) db.connectTo(startupConnection)
-        else if (startupFile.length) db.open(startupFile)
-        else if (startupSample) db.openSample(startupSampleId)
-    }
-
-    OpenDialog { id: openDialog; onPicked: function (file) { db.open(file) } }
-
-    ConnectDialog { id: connectDialog; database: db }
 
     // ---- Copy any text: right-click it ----
     // Labels, names, types, errors and figures are plain text all over the app;
@@ -136,188 +253,6 @@ ApplicationWindow {
                   : "Copy “" + (copyMenu.full.length > 40 ? copyMenu.full.slice(0, 38).replace(/\s+/g, " ") + "…"
                                                           : copyMenu.full.replace(/\s+/g, " ")) + "”"
             onTriggered: win.copyText(copyMenu.selected.length ? copyMenu.selected : copyMenu.full)
-        }
-    }
-
-    // Changes need the user's say-so: requestChanges(then) asks once, then runs `then`.
-    AllowChangesDialog {
-        id: allowDialog
-        database: db
-        property var then: null
-        onAllowed: { if (then) then(); then = null }
-        onClosed: if (!db.changesAllowed) then = null
-    }
-    function requestChanges(then) {
-        if (db.changesAllowed) { if (then) then(); return }
-        allowDialog.then = then || null
-        allowDialog.open()
-    }
-    function showConnectDialog() { connectDialog.open() }
-
-    // The Samples page before anything is open: from the welcome screen's Samples button.
-    property bool browsingSamples: startupView === "samples" && !startupSample
-    Connections { target: db; function onOpenChanged() { if (db.isOpen) win.browsingSamples = false } }
-
-    WelcomeView {
-        anchors.fill: parent
-        visible: !db.isOpen && !win.browsingSamples
-        error: db.error
-        onOpenRequested: openDialog.open()
-        onSamplesRequested: win.browsingSamples = true
-        onConnectRequested: connectDialog.open()
-        onFileDropped: (url) => db.open(url)
-        // A file opens; a server needs its password (never kept), so the dialog asks.
-        onRecentOpened: (entry) => {
-            if (entry.kind === "file") db.open(entry.settings.path)
-            else connectDialog.openWith(entry.settings)
-        }
-    }
-
-    Loader {
-        anchors.fill: parent
-        active: !db.isOpen && win.browsingSamples
-        visible: active
-        sourceComponent: Rectangle {
-            color: Theme.window
-            SamplesView {
-                anchors.fill: parent
-                database: db
-                canGoBack: true
-                onBack: win.browsingSamples = false
-                onOpenSample: function (id) { db.openSample(id) }
-                onConnectSample: function (id) { connectDialog.openForSample(id) }
-            }
-        }
-    }
-
-    Item {
-        anchors.fill: parent
-        visible: db.isOpen
-
-        SchemaSidebar {
-            id: sidebar
-            width: 272
-            z: 2            // above the diagram, whose lines can extend under it
-            anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-            database: db
-            selected: win.view === "table" ? win.selectedTable : ""
-            diagramSelected: win.view === "diagram"
-            querySelected: win.view === "query"
-            exportSelected: win.view === "export"
-            designSelected: win.view === "design"
-            samplesSelected: win.view === "samples"
-            compareSelected: win.view === "compare"
-            onCompareRequested: win.view = "compare"
-            onSamplesRequested: win.view = "samples"
-            onDesignRequested: win.view = "design"
-            onExportRequested: win.view = "export"
-            onQueryRequested: win.view = "query"
-            onSelect: (name) => { win.selectedTable = name; win.view = "table" }
-            onDiagramRequested: win.view = "diagram"
-            // Closing a sample goes back to the samples, to pick another.
-            onAllowChangesRequested: win.requestChanges(null)
-            onCloseRequested: {
-                const wasSample = db.sampleId.length > 0
-                db.close()
-                win.browsingSamples = wasSample
-            }
-        }
-        Rectangle {
-            anchors { left: sidebar.right; top: parent.top; bottom: parent.bottom }
-            width: 1; color: Theme.separator
-        }
-
-        DiagramView {
-            anchors { left: sidebar.right; leftMargin: 1; right: parent.right
-                      top: parent.top; bottom: parent.bottom }
-            visible: win.view === "diagram"
-            database: db
-            initialFind: win.startupFind
-            hoverEnabled: !win.screenshotMode
-            exportOnLoad: win.startupExportDiagram
-            // Remember where cards are dragged, per database.
-            layoutKey: db.isOpen ? db.dialect + ":" + (db.filePath.length ? db.filePath : db.location + "/" + db.displayName) : ""
-            onOpenTable: (name) => { win.selectedTable = name; win.detailTab = 0; win.view = "table" }
-        }
-
-        QueryView {
-            anchors { left: sidebar.right; leftMargin: 29; right: parent.right; rightMargin: 28
-                      top: parent.top; topMargin: 24; bottom: parent.bottom; bottomMargin: 24 }
-            visible: win.view === "query"
-            database: db
-            initialQuery: win.startupQuery
-            startMode: win.startupQueryBuilder || win.startupBuilderDemo ? "builder" : ""
-            builderDemo: win.startupBuilderDemo
-            explainInitialQuery: win.startupExplain
-            completeDemo: win.startupCompleteDemo
-            runInitialQuery: win.startupQuery.length > 0
-        }
-
-        Loader {
-            anchors { left: sidebar.right; leftMargin: 29; right: parent.right; rightMargin: 28
-                      top: parent.top; topMargin: 20; bottom: parent.bottom; bottomMargin: 24 }
-            active: win.view === "export"       // created on first visit, so nothing is generated before
-            visible: active
-            sourceComponent: ProjectView {
-                database: db
-                autoBuild: win.startupBuild
-                projectsDir: win.projectsDir
-                openProject: win.startupProject
-                onBuildFinished: win.buildFinished()
-            }
-        }
-
-        Loader {
-            anchors { left: sidebar.right; leftMargin: 1; right: parent.right; top: parent.top; bottom: parent.bottom }
-            active: win.view === "design"
-            visible: active
-            sourceComponent: DesignerView {
-                database: db
-                demo: win.startupDesignDemo
-                demoMenu: win.startupDesignMenu
-                initialTable: win.startupView === "design" ? win.startupDesignTable : ""
-                initialTab: win.startupDesignTab.length ? win.startupDesignTab : "table"
-                onOpenFile: function (path) { db.open(path) }
-                onChangesRequested: function (then) { win.requestChanges(then) }
-            }
-        }
-
-        Loader {
-            anchors { left: sidebar.right; leftMargin: 1; right: parent.right; top: parent.top; bottom: parent.bottom }
-            active: win.view === "samples"
-            visible: active
-            sourceComponent: SamplesView {
-                database: db
-                onOpenSample: function (id) { db.openSample(id) }
-                onShowDiagram: win.view = "diagram"
-                onConnectSample: function (id) { connectDialog.openForSample(id) }
-            }
-        }
-
-        Loader {
-            anchors { left: sidebar.right; leftMargin: 1; right: parent.right; top: parent.top; bottom: parent.bottom }
-            active: win.view === "compare"
-            visible: active
-            sourceComponent: CompareView {
-                database: db
-                initialOther: win.startupCompare
-                onChangesRequested: function (then) { win.requestChanges(then) }
-            }
-        }
-
-        TableDetail {
-            anchors { left: sidebar.right; leftMargin: 1; right: parent.right
-                      top: parent.top; bottom: parent.bottom }
-            visible: win.view === "table"
-            initialRow: win.startupRow
-            // Re-read when the database or the selection changes.
-            info: (db.tables, win.selectedTable.length ? db.table(win.selectedTable) : ({}))
-            database: db
-            tab: win.detailTab
-            onTabRequested: (t) => win.detailTab = t
-            onNavigate: (name) => win.selectedTable = name
-            onChangesRequested: win.requestChanges(null)
-            editDemo: win.startupEditDemo
         }
     }
 }

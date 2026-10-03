@@ -58,6 +58,19 @@ echo "== Bundling Qt into the app"
 # Mimer SQL isn't something Studio connects to; drop its driver.
 rm -f "$APP/Contents/PlugIns/sqldrivers/libqsqlmimer.dylib"
 
+# A DMG for one architecture carries only that architecture: Qt's frameworks and
+# DuckDB's library come universal, and half of each would never run.
+case "$ARCHS" in
+    *";"*) ;;
+    *)
+        echo "== Keeping only $ARCHS"
+        while IFS= read -r -d '' f; do
+            file "$f" | grep -q "Mach-O universal" || continue
+            lipo "$f" -thin "$ARCHS" -output "$f.thin" && mv "$f.thin" "$f"
+        done < <(find "$APP" -type f -print0)
+        ;;
+esac
+
 echo "== Checking nothing loads from outside the app"
 # Every library a binary in the app loads is the system's or in the app. A
 # driver whose library couldn't be bundled goes (the app offers only drivers

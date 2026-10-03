@@ -4,8 +4,11 @@
 vendored as the amalgamated header Qivot publishes in `dist/qivot.hpp`.
 `qivot.cpp` compiles its implementation once; everything else includes
 `qivot.hpp`. Exported projects get a copy of the same three files.
+`drivers/duckdb` is Qivot's Qt driver for DuckDB, compiled into Studio when
+DuckDB is (see `cmake/duckdb.cmake`).
 
-From Qivot commit `77f4ecd` (2026-10-01). To update:
+From Qivot commit `bff3be2` (2026-10-02), with its DuckDB driver from
+`drivers/duckdb` (read-only opening and rows converted as they're read). To update:
 
 ```bash
 tools/update-qivot.sh              # the latest on GitHub (main)

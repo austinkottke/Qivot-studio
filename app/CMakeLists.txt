@@ -28,6 +28,7 @@ set(STUDIO_QML_FILES
     qml/QueryBuilderView.qml
     qml/ProfileView.qml
     qml/SqlTab.qml
+    qml/DatabasePane.qml
 )
 
 # The icon (tools/make-icon.py): .icns in the macOS bundle, .ico in the Windows
@@ -71,3 +72,10 @@ set_target_properties(qivot-studio PROPERTIES
     MACOSX_BUNDLE_COPYRIGHT "Copyright © 2026 Austin Kottke. MIT License."
     WIN32_EXECUTABLE TRUE)
 target_compile_definitions(qivot-studio PRIVATE PROJECT_VERSION_STRING="${PROJECT_VERSION}")
+
+# Windows finds a DLL next to the program: DuckDB's goes where the app and the
+# tests are built (one folder on Windows: qt_standard_project_setup).
+if(WIN32 AND STUDIO_HAS_DUCKDB)
+    add_custom_command(TARGET qivot-studio POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${STUDIO_DUCKDB_DLL}" "$<TARGET_FILE_DIR:qivot-studio>")
+endif()

@@ -47,3 +47,13 @@ else()
 endif()
 target_include_directories(studiocore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(studiocore PUBLIC Qt::Core Qt::Gui Qt::Network Qt::Qml Qt::Quick Qt::Sql qivot)
+
+# DuckDB files, through Qivot's QDUCKDB driver (see cmake/duckdb.cmake).
+if(STUDIO_HAS_DUCKDB)
+    target_sources(studiocore PRIVATE
+        ${PROJECT_SOURCE_DIR}/third_party/qivot/drivers/duckdb/duckdbdriver.h
+        ${PROJECT_SOURCE_DIR}/third_party/qivot/drivers/duckdb/duckdbdriver.cpp)
+    target_include_directories(studiocore PRIVATE ${PROJECT_SOURCE_DIR}/third_party/qivot/drivers/duckdb)
+    target_link_libraries(studiocore PUBLIC duckdb::duckdb)
+    target_compile_definitions(studiocore PUBLIC STUDIO_HAS_DUCKDB)
+endif()

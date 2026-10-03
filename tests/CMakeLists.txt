@@ -58,6 +58,15 @@ add_executable(tst_querytools tst_querytools.cpp)
 target_link_libraries(tst_querytools PRIVATE Qt::Test studiocore)
 add_test(NAME querytools COMMAND tst_querytools)
 
+if(STUDIO_HAS_DUCKDB)
+    add_executable(tst_duckdb tst_duckdb.cpp)
+    target_link_libraries(tst_duckdb PRIVATE Qt::Test studiocore)
+    add_test(NAME duckdb COMMAND tst_duckdb)
+    set_tests_properties(duckdb PROPERTIES
+        ENVIRONMENT "STUDIO_DUCKDB_FIXTURE=${CMAKE_CURRENT_BINARY_DIR}/shop.duckdb"
+        FIXTURES_SETUP duckdb_file)
+endif()
+
 add_executable(tst_samples tst_samples.cpp)
 target_link_libraries(tst_samples PRIVATE Qt::Test studiocore)
 add_test(NAME samples COMMAND tst_samples)
@@ -148,3 +157,17 @@ set_tests_properties(app_smoke_builder PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_EN
 # Column profiles, on the biggest table.
 add_test(NAME app_smoke_profile COMMAND qivot-studio --sample --table order_item --view profile --smoke --shot-delay 3000)
 set_tests_properties(app_smoke_profile PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}")
+
+# A DuckDB file (written by the duckdb test) on every screen that reads one.
+if(STUDIO_HAS_DUCKDB)
+    set(_duck "${CMAKE_CURRENT_BINARY_DIR}/shop.duckdb")
+    foreach(_args "--table;book" "--table;book;--view;data" "--table;book;--view;profile" "--table;book;--view;cpp"
+                  "--view;query;--query;SELECT country, COUNT(*) FROM author GROUP BY 1"
+                  "--view;query;--query;SELECT * FROM book;--explain" "--view;design" "--view;export")
+        string(MD5 _id "${_args}")
+        string(SUBSTRING "${_id}" 0 6 _id)
+        add_test(NAME app_smoke_duckdb_${_id} COMMAND qivot-studio "${_duck}" ${_args} --smoke)
+        set_tests_properties(app_smoke_duckdb_${_id} PROPERTIES ENVIRONMENT "${STUDIO_SMOKE_ENV}"
+                             FIXTURES_REQUIRED duckdb_file)
+    endforeach()
+endif()

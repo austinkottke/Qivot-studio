@@ -87,7 +87,9 @@ def main():
         f.unlink()
 
     print("== Bundling the database drivers' libraries", flush=True)
-    missing = bundle_dependencies(folder, [s for s in a.search if s.exists()])
+    # The built program's own folder first: DuckDB's DLL is copied there by the build.
+    search = [a.exe.resolve().parent] + [s for s in a.search if s.exists()]
+    missing = bundle_dependencies(folder, search)
     if missing:
         # Only a driver's library may be missing: that driver goes (the app offers
         # only drivers that load); anything else is an error.
@@ -96,7 +98,7 @@ def main():
             if needs:
                 print(f"   dropping {drv.name}: needs {', '.join(needs)}")
                 drv.unlink()
-        still = bundle_dependencies(folder, [s for s in a.search if s.exists()])
+        still = bundle_dependencies(folder, search)
         if still:
             sys.exit(f"Not found: {', '.join(still)}")
 

@@ -116,7 +116,7 @@ jobs:
         env:
           MACOS_SIGN_IDENTITY: ${{ env.HAS_CERT == 'true' && secrets.MACOS_SIGN_IDENTITY || '' }}
           MACOS_ARCHS: ${{ matrix.arch }}
-          REQUIRE_DRIVERS: QPSQL,QMYSQL
+          REQUIRE_DRIVERS: QPSQL,QMYSQL,QDUCKDB
         run: tools/package-macos.sh "$QT_ROOT_DIR" "$VERSION" dist 2>&1 | tee -a logs/release.log
 
       - name: Notarize
@@ -139,7 +139,7 @@ jobs:
           mnt=$(hdiutil attach -nobrowse -readonly dist/*.dmg | tail -1 | sed 's/.*\(\/Volumes\/.*\)/\1/')
           app="$mnt/Qivot Studio.app/Contents/MacOS/Qivot Studio"
           lipo -archs "$app"
-          "$app" --list-drivers --require-drivers QPSQL,QMYSQL
+          "$app" --list-drivers --require-drivers QPSQL,QMYSQL,QDUCKDB
           "$app" --sample --smoke
           "$app" --sample --view design --design-demo --smoke
           "$app" --sample --builder-demo --smoke
@@ -226,7 +226,7 @@ jobs:
           $exe = (Get-ChildItem build-release -Recurse -Filter "Qivot Studio.exe" | Select-Object -First 1).FullName
           python tools/package/package-windows.py --qt "$env:QT_ROOT_DIR" --exe "$exe" --version "$env:VERSION" --out dist `
             --search "$env:PG_ROOT\bin" --search "$env:MYSQL_ROOT\bin" --search "$env:MYSQL_ROOT\lib" `
-            --require-drivers QPSQL,QMYSQL `
+            --require-drivers QPSQL,QMYSQL,QDUCKDB `
             --try-connect "postgres://postgres:root@127.0.0.1:5432/postgres" 2>&1 | Tee-Object -Append logs/release.log
 
       # The end of the log as an annotation: readable without signing in.
@@ -301,7 +301,7 @@ jobs:
 
       - name: Build the AppImage
         env:
-          REQUIRE_DRIVERS: QPSQL,QMYSQL
+          REQUIRE_DRIVERS: QPSQL,QMYSQL,QDUCKDB
           TRY_CONNECT: postgres://qivot:qivot@127.0.0.1:5432/studio mysql://root:qivot@127.0.0.1:3306/studio
         run: tools/package/package-linux.sh "$QT_ROOT_DIR" "$VERSION" dist 2>&1 | tee -a logs/release.log
 
