@@ -139,7 +139,18 @@ cp "$ROOT/LICENSE" "$STAGE/LICENSE.txt"
 cp "$ROOT/THIRD-PARTY-NOTICES.md" "$STAGE/Third-party notices.md"
 mkdir -p "$OUT"
 rm -f "$DMG"
-hdiutil create -volname "Qivot Studio $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -imagekey zlib-level=9 "$DMG" >/dev/null
+# hdiutil can find the folder busy for a moment (Spotlight or XProtect looking
+# at what was just copied, often on CI): wait and try again.
+for attempt in 1 2 3 4 5; do
+    if hdiutil create -volname "Qivot Studio $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO \
+                      -imagekey zlib-level=9 "$DMG" >/dev/null; then
+        break
+    fi
+    [ "$attempt" = 5 ] && { echo "hdiutil couldn't make the DMG"; exit 1; }
+    echo "   hdiutil failed (try $attempt); trying again"
+    rm -f "$DMG"
+    sleep $((attempt * 5))
+done
 rm -rf "$STAGE"
 if [ "$IDENTITY" != "-" ]; then
     codesign --sign "$IDENTITY" --timestamp "$DMG"
