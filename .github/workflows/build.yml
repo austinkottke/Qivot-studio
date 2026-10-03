@@ -50,7 +50,8 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        shell: bash          # with pipefail: a failed build fails the step, through tee
+        run: cmake --build build --config Release --parallel 2>&1 | tee build.log
 
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
@@ -69,7 +70,15 @@ jobs:
         run: |
           import os, pathlib, re, shlex, subprocess
           log = pathlib.Path("build/Testing/Temporary/LastTest.log")
-          text = log.read_text(errors="replace") if log.exists() else "No LastTest.log: the tests never ran."
+          if not log.exists():
+              # It didn't build: the compiler's errors are what to see.
+              build = pathlib.Path("build.log")
+              lines = build.read_text(errors="replace").splitlines() if build.exists() else []
+              errors = [l for l in lines if re.search(r"\berror\b|: fatal|undefined reference|Undefined symbols", l, re.I)]
+              body = "\n".join((errors or lines[-40:])[:25])[-3500:] or "No build.log either: it failed before building."
+              print("::error title=Build failed::" + body.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
+              raise SystemExit
+          text = log.read_text(errors="replace")
           # One block per test: keep the ones that didn't pass.
           blocks = re.split(r"\n(?=\d+/\d+ Testing: )", text)
           failed = [b for b in blocks if "Test Passed." not in b and "Testing:" in b] or [text]

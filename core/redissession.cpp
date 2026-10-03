@@ -319,9 +319,13 @@ QVariantMap RedisSession::keyInfo(const QString &key)
         return {};
     const QByteArray k = b(key);
     const QString type = call({ "TYPE", k }).text();
-    QByteArray sizeCommand = type == QLatin1String("string") ? "STRLEN" : type == QLatin1String("hash") ? "HLEN"
-                           : type == QLatin1String("list") ? "LLEN" : type == QLatin1String("set") ? "SCARD"
-                           : type == QLatin1String("zset") ? "ZCARD" : type == QLatin1String("stream") ? "XLEN" : QByteArray();
+    // (Each branch a QByteArray: MSVC won't choose between a literal and one.)
+    const QByteArray sizeCommand = type == QLatin1String("string") ? QByteArray("STRLEN")
+                                 : type == QLatin1String("hash")   ? QByteArray("HLEN")
+                                 : type == QLatin1String("list")   ? QByteArray("LLEN")
+                                 : type == QLatin1String("set")    ? QByteArray("SCARD")
+                                 : type == QLatin1String("zset")   ? QByteArray("ZCARD")
+                                 : type == QLatin1String("stream") ? QByteArray("XLEN") : QByteArray();
     QList<QList<QByteArray>> asks{ { "PTTL", k }, { "OBJECT", "ENCODING", k }, { "MEMORY", "USAGE", k } };
     if (!sizeCommand.isEmpty())
         asks << QList<QByteArray>{ sizeCommand, k };
@@ -377,8 +381,8 @@ QVariantMap RedisSession::value(const QString &key, const QVariant &from, int co
         const bool hash = type == QLatin1String("hash");
         const QString cursor = from.toString().isEmpty() ? QStringLiteral("0") : from.toString();
         const QVector<RedisClient::Reply> a = m_client->pipeline(
-            { { hash ? "HLEN" : "SCARD", k },
-              { hash ? "HSCAN" : "SSCAN", k, b(cursor), "COUNT", QByteArray::number(count) } }, CommandTimeout);
+            { { QByteArray(hash ? "HLEN" : "SCARD"), k },
+              { QByteArray(hash ? "HSCAN" : "SSCAN"), k, b(cursor), "COUNT", QByteArray::number(count) } }, CommandTimeout);
         out.insert(QStringLiteral("total"), a.value(0).integer);
         const RedisClient::Reply page = a.value(1);
         out.insert(QStringLiteral("next"), page.items.size() >= 2 ? page.items.at(0).text() : QStringLiteral("0"));
@@ -397,7 +401,7 @@ QVariantMap RedisSession::value(const QString &key, const QVariant &from, int co
         const QByteArray stop = QByteArray::number(start + count - 1);
         QList<QByteArray> range = list ? QList<QByteArray>{ "LRANGE", k, QByteArray::number(start), stop }
                                        : QList<QByteArray>{ "ZRANGE", k, QByteArray::number(start), stop, "WITHSCORES" };
-        const QVector<RedisClient::Reply> a = m_client->pipeline({ { list ? "LLEN" : "ZCARD", k }, range }, CommandTimeout);
+        const QVector<RedisClient::Reply> a = m_client->pipeline({ { QByteArray(list ? "LLEN" : "ZCARD"), k }, range }, CommandTimeout);
         const qint64 total = a.value(0).integer;
         out.insert(QStringLiteral("total"), total);
         const QVector<RedisClient::Reply> items = a.value(1).items;
