@@ -11,6 +11,7 @@ Item {
     property var redis
     property string initialKey: ""            // --table: a key to show
     property string initialMode: ""           // --view console / server
+    property string initialCommands: ""       // --query: run in the console, ';' between commands
     signal closeRequested()
 
     property string mode: "keys"              // "keys", "console" or "server"
@@ -103,6 +104,10 @@ Item {
         rescan()
         if (initialKey.length) select(initialKey)
         if (initialMode === "console" || initialMode === "server") { mode = initialMode; if (mode === "server") redis.refresh() }
+        if (initialCommands.length) {
+            mode = "console"
+            initialCommands.split(";").forEach(function (c) { if (c.trim().length) console_.runLine(c.trim()) })
+        }
     }
 
     // ---- The sidebar ----
@@ -386,11 +391,19 @@ Item {
 
         // ---- Console ----
         Item {
+            id: console_
             visible: root.mode === "console"
             anchors { left: parent.left; right: parent.right; top: modes.bottom; topMargin: 16; bottom: parent.bottom }
             property var history: []
             property int historyAt: -1
             ListModel { id: transcript }       // { command, text, kind: "ok"|"error"|"refused", ms }
+            function runLine(line) {
+                const r = root.redis.run(line)
+                transcript.append({ command: line, text: r.ok ? r.text : (r.text && r.text.length ? r.text : r.error),
+                                    kind: r.refused ? "refused" : r.ok ? "ok" : "error", ms: r.ms !== undefined ? r.ms : -1 })
+                history = history.concat([line])
+                historyAt = -1
+            }
 
             Rectangle {
                 anchors { left: parent.left; right: parent.right; top: parent.top; bottom: input.top; bottomMargin: 10 }
@@ -448,11 +461,7 @@ Item {
                 onAccepted: {
                     const line = text.trim()
                     if (!line.length) return
-                    const r = root.redis.run(line)
-                    transcript.append({ command: line, text: r.ok ? r.text : (r.text && r.text.length ? r.text : r.error),
-                                        kind: r.refused ? "refused" : r.ok ? "ok" : "error", ms: r.ms !== undefined ? r.ms : -1 })
-                    parent.history = parent.history.concat([line])
-                    parent.historyAt = -1
+                    console_.runLine(line)
                     text = ""
                 }
                 Keys.onUpPressed: {

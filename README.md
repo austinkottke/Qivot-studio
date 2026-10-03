@@ -162,45 +162,78 @@
 
 <table>
   <tr>
-    <td width="560"><a href="docs/studio-compare.png"><img src="docs/feature-compare.png" width="560" alt="Comparing the bookshop with a changed copy: four differences and the migration that makes the copy match"></a></td>
+    <td width="560"><a href="docs/studio-redis.png"><img src="docs/feature-redis.png" width="560" alt="A Redis database's keys with their types and TTLs, and the user:1002 hash's fields in the grid"></a></td>
+    <td width="280">
+      <sub><b>REDIS</b></sub>
+      <h3>Every key, by its type</h3>
+      <p>Keys found by pattern, a page at<br>a time, each with its type and<br>TTL. Hashes, lists, sets, sorted<br>sets and streams in the grid;<br>strings as text, JSON formatted,<br>binary as hex.</p>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="280">
+      <sub><b>REDIS CONSOLE</b></sub>
+      <h3>redis-cli, read-only</h3>
+      <p>Commands as redis-cli runs them.<br>Studio asks the server about<br>each one and refuses any that<br>writes until you allow changes;<br>ones that would block never run.</p>
+    </td>
+    <td width="560"><a href="docs/studio-redis-console.png"><img src="docs/feature-redis-console.png" width="560" alt="The Redis console: HGETALL, ZREVRANGE and TTL answered, and a SET refused because the session is read-only"></a></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td width="560"><a href="docs/studio-redis-server.png"><img src="docs/feature-redis-server.png" width="560" alt="Redis server information: version, role, memory, clients, operations per second, hit rate and the full INFO"></a></td>
+    <td width="280">
+      <sub><b>REDIS SERVER</b></sub>
+      <h3>The server at a glance</h3>
+      <p>INFO's highlights (version,<br>role, memory, clients,<br>operations per second, hit rate,<br>eviction) and the rest of it<br>below.</p>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
     <td width="280">
       <sub><b>COMPARE</b></sub>
       <h3>Two databases, and the<br>SQL between them</h3>
       <p>Compare a file, a server or a<br>sample with another: the<br>differences, and the migration<br>that makes either one match, to<br>copy, save or apply.</p>
     </td>
+    <td width="560"><a href="docs/studio-compare.png"><img src="docs/feature-compare.png" width="560" alt="Comparing the bookshop with a changed copy: four differences and the migration that makes the copy match"></a></td>
   </tr>
 </table>
 
 <table>
   <tr>
+    <td width="560"><a href="docs/studio-migration.png"><img src="docs/feature-migration.png" width="560" alt="The designer's SQL tab: the changes in words and the SQLite migration that makes them"></a></td>
     <td width="280">
       <sub><b>MIGRATION</b></sub>
       <h3>Designs checked<br>against the data</h3>
       <p>Every design change becomes SQL<br>in the database's own dialect.<br>Required columns with NULLs,<br>duplicate values in a unique<br>column, references that point<br>nowhere: each problem is caught<br>before anything runs.</p>
     </td>
-    <td width="560"><a href="docs/studio-migration.png"><img src="docs/feature-migration.png" width="560" alt="The designer's SQL tab: the changes in words and the SQLite migration that makes them"></a></td>
   </tr>
 </table>
 
 <table>
   <tr>
-    <td width="560"><a href="docs/studio-cpp.png"><img src="docs/feature-cpp.png" width="560" alt="The book table's C++ tab: its Qivot model class, ready to copy"></a></td>
     <td width="280">
       <sub><b>C++</b></sub>
       <h3>A Qivot model class<br>for every table</h3>
       <p>Following Qivot's real rules: a<br>field per column,<br><code>QiForeignKey</code> where<br>Qivot can follow it, and a note<br>for anything it can't map.</p>
     </td>
+    <td width="560"><a href="docs/studio-cpp.png"><img src="docs/feature-cpp.png" width="560" alt="The book table's C++ tab: its Qivot model class, ready to copy"></a></td>
   </tr>
 </table>
 
 <table>
   <tr>
+    <td width="560"><a href="docs/studio-ide.png"><img src="docs/feature-ide.png" width="560" alt="The exported project open in the IDE, with all eight model tests passing"></a></td>
     <td width="280">
       <sub><b>IDE</b></sub>
       <h3>Build, test and run<br>without leaving Studio</h3>
       <p>Export a CMake project with the<br>models, an example and a test<br>per model, then build ⌘B, test<br>⌘U and run ⌘R, with the<br>compiler's problems a click from<br>the line.</p>
     </td>
-    <td width="560"><a href="docs/studio-ide.png"><img src="docs/feature-ide.png" width="560" alt="The exported project open in the IDE, with all eight model tests passing"></a></td>
   </tr>
 </table>
 

@@ -111,6 +111,7 @@ Item {
                 redis: pane.redis
                 initialKey: pane.startupTable
                 initialMode: pane.startupView
+                initialCommands: pane.startupQuery
                 onCloseRequested: pane.redis.close()
             }
         }

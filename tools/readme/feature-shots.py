@@ -23,9 +23,12 @@ CROPS = {  # name: (left, top, right, bottom) in the screenshot's pixels
     "running":   (290, 0, 1004, 330),
     "recent":    (330, 370, 1080, 800),
     "connect":   (468, 318, 932, 1012),
+    "redis":          (0, 36, 820, 520),
+    "redis-console":  (284, 64, 880, 640),
+    "redis-server":   (284, 64, 1010, 560),
 }
 # Crops that end partway through rows fade out at the bottom instead.
-FADE = {"data", "profile", "structure", "compare", "query", "migration"}
+FADE = {"data", "profile", "structure", "compare", "query", "migration", "redis-server"}
 RADIUS, PAD, BLUR, DROP, FADE_PX = 18, 48, 22, 12, 90
 
 def shot(name):
