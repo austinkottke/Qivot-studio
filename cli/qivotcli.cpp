@@ -22,10 +22,60 @@
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QUrl>
+#include <cstdio>
+#include <functional>
 #include <memory>
+#ifdef Q_OS_WIN
+#  include <io.h>
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
+#  ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
+#    define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
+#  endif
+#else
+#  include <unistd.h>
+#endif
 
 namespace QivotCli {
 namespace {
+
+// --- Colour -----------------------------------------------------------------
+
+bool g_colorOut = false, g_colorErr = false;
+
+// ANSI SGR codes: "1" bold, "2" dim, "31" red, "32" green, "33" yellow, "36" cyan …
+QString paint(bool on, const char *code, const QString &text)
+{
+    if (!on || text.isEmpty())
+        return text;
+    return QStringLiteral("\x1b[%1m%2\x1b[0m").arg(QLatin1String(code), text);
+}
+QString ink(const char *code, const QString &text) { return paint(g_colorOut, code, text); }
+
+// "qivot-cli: " in front of an error.
+QString errorTag() { return paint(g_colorErr, "1;31", QStringLiteral("qivot-cli: ")); }
+
+// A change as the designer words it: additions green, removals red, the rest yellow.
+QString changeColour(const QString &change)
+{
+    const char *code = change.startsWith(QLatin1String("Create")) || change.startsWith(QLatin1String("Add")) ? "32"
+                     : change.startsWith(QLatin1String("Drop")) ? "31" : "33";
+    return ink(code, change);
+}
+
+// SQL with its comments dimmed.
+QString sqlColour(const QString &sql)
+{
+    if (!g_colorOut)
+        return sql;
+    QStringList lines = sql.split(QLatin1Char('\n'));
+    for (QString &l : lines)
+        if (l.trimmed().startsWith(QLatin1String("--")))
+            l = ink("2", l);
+    return lines.join(QLatin1Char('\n'));
+}
 
 const char *const kUsage =
 R"(qivot-cli: Qivot Studio's engine without the window.
@@ -45,7 +95,7 @@ Commands
   models <db> [--table T]... [-o models.h]
       Qivot model classes for the tables (the code Studio's C++ tab shows).
   project <db> -o <dir> [--name Name] [--force]
-      A complete Qt project around the models: CMake, qmake, main.cpp, README.
+      A complete Qt project around the models: CMake, main.cpp, tests, README.
   diff <source> <target> [--sql] [-o file.sql] [--exit-code]
       What differs, and the SQL that makes <target> match <source>.
   migrate new <name> --dir <dir> --from <desired> [--to <current>]
@@ -71,6 +121,79 @@ Options
 
 Exit codes: 0 done, 1 differences or pending (with --exit-code), 2 failed.
 )";
+
+// The QIVOT banner, shaded top to bottom.
+QString banner()
+{
+    static const char16_t *const rows[] = {
+        u" \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2557\u2588\u2588\u2557   \u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557",
+        u"\u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2551\u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2557\u255a\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255d",
+        u"\u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2551\u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2551   \u2588\u2588\u2551   \u2588\u2588\u2551",
+        u"\u2588\u2588\u2551\u2584\u2584 \u2588\u2588\u2551\u2588\u2588\u2551\u255a\u2588\u2588\u2557 \u2588\u2588\u2554\u255d\u2588\u2588\u2551   \u2588\u2588\u2551   \u2588\u2588\u2551",
+        u"\u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2551 \u255a\u2588\u2588\u2588\u2588\u2554\u255d \u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d   \u2588\u2588\u2551",
+        u" \u255a\u2550\u2550\u2580\u2580\u2550\u255d \u255a\u2550\u255d  \u255a\u2550\u2550\u2550\u255d   \u255a\u2550\u2550\u2550\u2550\u2550\u255d    \u255a\u2550\u255d",
+    };
+    static const char *const shades[] = { "1;38;5;51", "1;38;5;45", "1;38;5;39", "1;38;5;33", "1;38;5;63", "1;38;5;99" };
+    QString text = QStringLiteral("\n");
+    for (int i = 0; i < 6; ++i)
+        text += QStringLiteral("  ") + ink(shades[i], QString::fromUtf16(rows[i])) + QLatin1Char('\n');
+    text += QStringLiteral("\n  ") + ink("1", QStringLiteral("qivot-cli"))
+          + ink("2", QStringLiteral(" %1  \u00b7  Qivot Studio's engine without the window")
+                         .arg(QCoreApplication::applicationVersion()))
+          + QStringLiteral("\n");
+    return text;
+}
+
+// The help, coloured: headings, commands, <arguments>, [optional parts], --options.
+QString usage()
+{
+    const QString plain = QString::fromUtf8(kUsage);
+    if (!g_colorOut)
+        return plain;
+
+    static const QRegularExpression command(
+        QStringLiteral("^  (migrate (?:new|status|up|down|accept)|inspect|models|project|diff|query|drivers)\\b"));
+    static const QRegularExpression database(QStringLiteral("^  (path/to/file\\.db|sample:<id>|postgres://\\S+|migrations:<dir>)"));
+    static const QRegularExpression tokens(
+        QStringLiteral("(<[^>]+>)|(\\[[^\\]]+\\](?:\\.\\.\\.)?)|(?<![\\w-])(--?[a-z][a-z-]*)|(\\bqivot-cli\\b)"));
+    auto inline_ = [](const QString &text) {
+        QString result;
+        int at = 0;
+        QRegularExpressionMatchIterator it = tokens.globalMatch(text);
+        while (it.hasNext()) {
+            const QRegularExpressionMatch m = it.next();
+            result += text.mid(at, m.capturedStart() - at);
+            const char *code = !m.captured(1).isEmpty() ? "36" : !m.captured(2).isEmpty() ? "2"
+                             : !m.captured(3).isEmpty() ? "33" : "1;32";
+            result += ink(code, m.captured(0));
+            at = m.capturedEnd();
+        }
+        return result + text.mid(at);
+    };
+
+    QStringList lines = plain.split(QLatin1Char('\n'));
+    QString text = banner();
+    for (int i = 1; i < lines.size(); ++i) {       // the first line is the banner's
+        const QString &l = lines.at(i);
+        QRegularExpressionMatch m;
+        if (l.startsWith(QLatin1String("Usage:"))) {
+            text += ink("1", QStringLiteral("Usage:")) + inline_(l.mid(6));
+        } else if (l.startsWith(QLatin1String("Exit codes:"))) {
+            text += ink("2", l);
+        } else if (!l.isEmpty() && !l.startsWith(QLatin1Char(' '))) {
+            text += ink("1;35", l);                                        // a heading
+        } else if ((m = command.match(l)).hasMatch()) {
+            text += QStringLiteral("  ") + ink("1;32", m.captured(1)) + inline_(l.mid(m.capturedEnd()));
+        } else if ((m = database.match(l)).hasMatch()) {
+            text += QStringLiteral("  ") + ink("36", m.captured(1)) + l.mid(m.capturedEnd());
+        } else {
+            text += inline_(l);
+        }
+        if (i + 1 < lines.size())
+            text += QLatin1Char('\n');
+    }
+    return text;
+}
 
 // --- Arguments --------------------------------------------------------------
 
@@ -149,7 +272,12 @@ bool writeOut(const QString &text, const QString &path, QTextStream &out, QTextS
 }
 
 // Columns padded to line up; the last one isn't padded.
-QString table(const QStringList &header, const QVector<QStringList> &rows, int indent = 0)
+// paintCell(row, column, text) colours a cell (row -1 is the header); the
+// padding stays outside the colour, so the columns still line up.
+using CellPainter = std::function<QString(int, int, const QString &)>;
+
+QString table(const QStringList &header, const QVector<QStringList> &rows, int indent = 0,
+              const CellPainter &paintCell = CellPainter())
 {
     int columns = header.size();
     for (const QStringList &r : rows)
@@ -162,18 +290,22 @@ QString table(const QStringList &header, const QVector<QStringList> &rows, int i
             width[c] = qMax(width[c], int(r.at(c).size()));
 
     QString text;
-    auto line = [&](const QStringList &cells) {
+    auto line = [&](int row, const QStringList &cells) {
+        int last = cells.size() - 1;
+        while (last >= 0 && cells.at(last).isEmpty())
+            --last;
         QString l(indent, QLatin1Char(' '));
-        for (int c = 0; c < cells.size(); ++c)
-            l += c + 1 < cells.size() ? cells.at(c).leftJustified(width[c] + 2) : cells.at(c);
-        while (l.endsWith(QLatin1Char(' ')))
-            l.chop(1);
+        for (int c = 0; c <= last; ++c) {
+            l += paintCell ? paintCell(row, c, cells.at(c)) : cells.at(c);
+            if (c < last)
+                l += QString(width[c] + 2 - cells.at(c).size(), QLatin1Char(' '));
+        }
         text += l + QLatin1Char('\n');
     };
     if (!header.isEmpty())
-        line(header);
-    for (const QStringList &r : rows)
-        line(r);
+        line(-1, header);
+    for (int r = 0; r < rows.size(); ++r)
+        line(r, rows.at(r));
     return text;
 }
 
@@ -305,9 +437,9 @@ int inspect(const Args &a, QTextStream &out, QTextStream &err)
 {
     if (a.positional.size() != 2) { err << "usage: qivot-cli inspect <db> [--table T]... [--json]\n"; return Failed; }
     DatabaseSession s; Opened keep; QString error;
-    if (!openDb(a.positional.at(1), s, keep, a.value("history", "qivot_migrations"), error)) { err << "qivot-cli: " << error << '\n'; return Failed; }
+    if (!openDb(a.positional.at(1), s, keep, a.value("history", "qivot_migrations"), error)) { err << errorTag() << error << '\n'; return Failed; }
     const QVector<QiTableInfo> tables = chosen(s, a.all("table"), error);
-    if (!error.isEmpty()) { err << "qivot-cli: " << error << '\n'; return Failed; }
+    if (!error.isEmpty()) { err << errorTag() << error << '\n'; return Failed; }
 
     QHash<QString, qint64> rows;
     for (const QVariant &v : s.tables()) {
@@ -338,14 +470,14 @@ int inspect(const Args &a, QTextStream &out, QTextStream &err)
         return Ok;
     }
 
-    out << s.displayName() << " (" << s.dialectName() << "), " << tables.size()
-        << (tables.size() == 1 ? " table\n" : " tables\n");
+    out << ink("1", s.displayName()) << ink("2", QStringLiteral(" (%1), ").arg(s.dialectName()))
+        << ink("2", QStringLiteral("%1 %2").arg(tables.size()).arg(tables.size() == 1 ? "table" : "tables")) << '\n';
     for (const QiTableInfo &t : tables) {
         const qint64 n = rows.value(t.name, -1);
-        out << '\n' << t.name << "  (" << kindName(t.kind);
+        QString about = kindName(t.kind);
         if (n >= 0)
-            out << ", " << n << (n == 1 ? " row" : " rows");
-        out << ")\n";
+            about += QStringLiteral(", %1 %2").arg(n).arg(n == 1 ? "row" : "rows");
+        out << '\n' << ink("1;36", t.name) << ink("2", QStringLiteral("  (%1)").arg(about)) << '\n';
 
         QHash<QString, QString> refs;
         for (const QiForeignKeyInfo &f : t.foreignKeys) {
@@ -364,13 +496,28 @@ int inspect(const Args &a, QTextStream &out, QTextStream &err)
             if (refs.contains(c.name)) notes << refs.value(c.name);
             lines << QStringList{ c.name, c.type.isEmpty() ? QStringLiteral("-") : c.type, notes.join(", ") };
         }
-        out << table({}, lines, 2);
+        out << table({}, lines, 2, [](int, int column, const QString &text) {
+            if (column == 1)
+                return ink("2", text);
+            if (column == 2) {
+                // primary key in yellow, the reference in magenta
+                QString painted;
+                for (const QString &part : text.split(QStringLiteral(", "))) {
+                    if (!painted.isEmpty()) painted += ink("2", QStringLiteral(", "));
+                    painted += part.startsWith(QLatin1String("primary key")) || part == QLatin1String("auto") ? ink("33", part)
+                             : part.startsWith(QLatin1String("->")) ? ink("35", part) : ink("2", part);
+                }
+                return painted;
+            }
+            return text;
+        });
         for (const QiForeignKeyInfo &f : t.foreignKeys)
             if (f.columns.size() > 1)
                 out << "  (" << f.columns.join(", ") << ") -> " << f.refTable << '(' << f.refColumns.join(", ") << ")\n";
         for (const QiIndexInfo &i : t.indexes)
             if (!i.implicit)
-                out << "  index " << i.name << " (" << i.columns.join(", ") << ')' << (i.unique ? " unique" : "") << '\n';
+                out << "  " << ink("2", QStringLiteral("index")) << ' ' << i.name << ink("2", QStringLiteral(" (%1)").arg(i.columns.join(", ")))
+                    << (i.unique ? ink("33", QStringLiteral(" unique")) : QString()) << '\n';
     }
     return Ok;
 }
@@ -381,7 +528,7 @@ int models(const Args &a, QTextStream &out, QTextStream &err)
 {
     if (a.positional.size() != 2) { err << "usage: qivot-cli models <db> [--table T]... [-o models.h]\n"; return Failed; }
     DatabaseSession s; Opened keep; QString error;
-    if (!openDb(a.positional.at(1), s, keep, a.value("history", "qivot_migrations"), error)) { err << "qivot-cli: " << error << '\n'; return Failed; }
+    if (!openDb(a.positional.at(1), s, keep, a.value("history", "qivot_migrations"), error)) { err << errorTag() << error << '\n'; return Failed; }
 
     QString text;
     const QStringList only = a.all("table");
@@ -405,14 +552,14 @@ int project(const Args &a, QTextStream &, QTextStream &err)
     const QString dir = a.value("output");
     if (a.positional.size() != 2 || dir.isEmpty()) { err << "usage: qivot-cli project <db> -o <dir> [--name Name] [--force]\n"; return Failed; }
     DatabaseSession s; Opened keep; QString error;
-    if (!openDb(a.positional.at(1), s, keep, a.value("history", "qivot_migrations"), error)) { err << "qivot-cli: " << error << '\n'; return Failed; }
+    if (!openDb(a.positional.at(1), s, keep, a.value("history", "qivot_migrations"), error)) { err << errorTag() << error << '\n'; return Failed; }
 
     ProjectExport pe;
     pe.setSession(&s);
     const QString name = a.value("name", pe.suggestedName());
     const QDir target(dir);
     if (target.exists() && !target.isEmpty() && !a.has("force")) {
-        err << "qivot-cli: " << dir << " isn't empty (--force writes over it)\n";
+        err << errorTag() << dir << " isn't empty (--force writes over it)\n";
         return Failed;
     }
     const QMap<QString, QString> files = ProjectExport::generate(s, name);
@@ -454,7 +601,7 @@ int diff(const Args &a, QTextStream &out, QTextStream &err)
     if (a.positional.size() != 3) { err << "usage: qivot-cli diff <source> <target> [--sql] [-o file.sql] [--exit-code]\n"; return Failed; }
     DatabaseSession s; SchemaCompare compare; Opened k1, k2; QString error;
     if (!compareOpen(a.positional.at(1), a.positional.at(2), a.value("history", "qivot_migrations"), s, compare, k1, k2, error)) {
-        err << "qivot-cli: " << error << '\n';
+        err << errorTag() << error << '\n';
         return Failed;
     }
     const QStringList changes = compare.changes();
@@ -464,16 +611,16 @@ int diff(const Args &a, QTextStream &out, QTextStream &err)
         if (!changes.isEmpty() && !writeOut(sql, a.value("output"), out, err))
             return Failed;
     } else if (changes.isEmpty()) {
-        out << "No differences: " << shown(a.positional.at(2)) << " matches " << shown(a.positional.at(1)) << ".\n";
+        out << ink("1;32", QStringLiteral("No differences: ")) << shown(a.positional.at(2)) << " matches " << shown(a.positional.at(1)) << ".\n";
     } else {
-        out << changes.size() << (changes.size() == 1 ? " difference" : " differences")
-            << " to make " << shown(a.positional.at(2)) << " match " << shown(a.positional.at(1)) << ":\n";
+        out << ink("1;33", QStringLiteral("%1 %2").arg(changes.size()).arg(changes.size() == 1 ? "difference" : "differences"))
+            << " to make " << ink("1", shown(a.positional.at(2))) << " match " << ink("1", shown(a.positional.at(1))) << ":\n";
         for (const QString &c : changes)
-            out << "  " << c << '\n';
+            out << "  " << changeColour(c) << '\n';
         if (!compare.sameDialect())
             out << "(" << s.dialectName() << " and " << compare.other()->dialectName()
                 << " write types differently, so most columns differ in type.)\n";
-        out << "\n" << sql;
+        out << "\n" << sqlColour(sql);
         if (!sql.endsWith(QLatin1Char('\n')))
             out << '\n';
     }
@@ -523,12 +670,12 @@ int migrateNew(const Args &a, QTextStream &out, QTextStream &err)
     // (the up step); "toThis" goes back (the down step, in the desired one's dialect).
     DatabaseSession s; SchemaCompare compare; Opened k1, k2; QString error;
     if (!compareOpen(desired, current, history, s, compare, k1, k2, error)) {
-        err << "qivot-cli: " << error << '\n';
+        err << errorTag() << error << '\n';
         return Failed;
     }
     const QStringList changes = compare.changes();
     if (changes.isEmpty()) {
-        out << "No differences: " << shown(current) << " already matches " << shown(desired) << ". Nothing written.\n";
+        out << ink("1;32", QStringLiteral("No differences: ")) << shown(current) << " already matches " << shown(desired) << ". Nothing written.\n";
         return Ok;
     }
     const QString up = asMigration(compare.migration());
@@ -565,7 +712,7 @@ int migrateNew(const Args &a, QTextStream &out, QTextStream &err)
             return false;
         }
         f.write(text.toUtf8());
-        out << "wrote " << QDir::toNativeSeparators(f.fileName()) << '\n';
+        out << ink("32", QStringLiteral("wrote ")) << QDir::toNativeSeparators(f.fileName()) << '\n';
         return true;
     };
     const QString upText = header + changeList + QLatin1Char('\n') + up;
@@ -581,9 +728,9 @@ int migrateNew(const Args &a, QTextStream &out, QTextStream &err)
                    QStringLiteral("-- %1, undone.\n\n").arg(a.positional.at(2).trimmed()) + down))
             return Failed;
     }
-    out << changes.size() << (changes.size() == 1 ? " change" : " changes") << ":\n";
+    out << ink("1", QStringLiteral("%1 %2").arg(changes.size()).arg(changes.size() == 1 ? "change" : "changes")) << ":\n";
     for (const QString &c : changes)
-        out << "  " << c << '\n';
+        out << "  " << changeColour(c) << '\n';
     return Ok;
 }
 
@@ -612,11 +759,11 @@ int migrate(const Args &a, QTextStream &out, QTextStream &err)
 
     DatabaseSession s; Opened keep; QString error;
     if (!openDb(a.positional.at(2), s, keep, a.value("history", "qivot_migrations"), error, action == QLatin1String("up") && writes)) {
-        err << "qivot-cli: " << error << '\n';
+        err << errorTag() << error << '\n';
         return Failed;
     }
     if (writes && !s.allowChanges(true)) {
-        err << "qivot-cli: " << s.error() << '\n';
+        err << errorTag() << s.error() << '\n';
         return Failed;
     }
 
@@ -631,7 +778,7 @@ int migrate(const Args &a, QTextStream &out, QTextStream &err)
         QiMigrator m(conn);
         m.setTable(a.value("history", "qivot_migrations"));
         if (m.addDirectory(a.value("dir")) < 0) {
-            err << "qivot-cli: " << m.lastError() << '\n';
+            err << errorTag() << m.lastError() << '\n';
             return Failed;
         }
 
@@ -656,10 +803,19 @@ int migrate(const Args &a, QTextStream &out, QTextStream &err)
                     rows << QStringList{ QString::number(x.version), x.name, stateOf(x),
                                          x.appliedAt.isValid() ? x.appliedAt.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : QString(),
                                          x.durationMs >= 0 ? QStringLiteral("%1 ms").arg(x.durationMs) : QString() };
-                out << shown(a.positional.at(2)) << ": version " << m.currentVersion() << " of " << m.targetVersion();
-                if (pending) out << ", " << pending << " pending";
-                if (changed) out << ", " << changed << " changed since they ran";
-                out << "\n\n" << table({ "version", "name", "state", "applied (UTC)", "took" }, rows, 2);
+                out << ink("1", shown(a.positional.at(2))) << ": version " << ink("1", QString::number(m.currentVersion()))
+                    << " of " << m.targetVersion();
+                if (pending) out << ", " << ink("33", QStringLiteral("%1 pending").arg(pending));
+                if (changed) out << ", " << ink("31", QStringLiteral("%1 changed since they ran").arg(changed));
+                if (!pending && !changed) out << ink("32", QStringLiteral(", up to date"));
+                out << "\n\n" << table({ "version", "name", "state", "applied (UTC)", "took" }, rows, 2,
+                                        [](int row, int column, const QString &text) {
+                    if (row < 0)
+                        return ink("1;2", text);
+                    if (column == 2)
+                        return ink(text == QLatin1String("applied") ? "32" : text == QLatin1String("pending") ? "33" : "1;31", text);
+                    return column >= 3 ? ink("2", text) : text;
+                });
             }
             if (a.has("exit-code") && (pending || changed))
                 result = Differs;
@@ -678,27 +834,27 @@ int migrate(const Args &a, QTextStream &out, QTextStream &err)
         } else if (action == QLatin1String("up")) {
             const int n = a.has("to") ? m.migrateTo(a.value("to").toInt()) : m.migrate();
             if (n < 0) {
-                err << "qivot-cli: " << m.lastError() << '\n';
+                err << errorTag() << m.lastError() << '\n';
                 result = Failed;
             } else {
-                out << (n == 0 ? QStringLiteral("Up to date") : QStringLiteral("Applied %1").arg(n))
+                out << ink("1;32", n == 0 ? QStringLiteral("Up to date") : QStringLiteral("Applied %1").arg(n))
                     << ": version " << m.currentVersion() << ".\n";
             }
         } else if (action == QLatin1String("down")) {
             const int n = m.rollback(a.value("to").toInt());
             if (n < 0) {
-                err << "qivot-cli: " << m.lastError() << '\n';
+                err << errorTag() << m.lastError() << '\n';
                 result = Failed;
             } else {
-                out << "Undid " << n << (n == 1 ? " migration" : " migrations") << ": version " << m.currentVersion() << ".\n";
+                out << ink("1;33", QStringLiteral("Undid ")) << n << (n == 1 ? " migration" : " migrations") << ": version " << m.currentVersion() << ".\n";
             }
         } else {    // accept
             const int n = m.changed().size();
             if (!m.acceptChecksums()) {
-                err << "qivot-cli: " << m.lastError() << '\n';
+                err << errorTag() << m.lastError() << '\n';
                 result = Failed;
             } else {
-                out << "Accepted " << n << (n == 1 ? " edited migration" : " edited migrations") << ".\n";
+                out << ink("1;32", QStringLiteral("Accepted ")) << n << (n == 1 ? " edited migration" : " edited migrations") << ".\n";
             }
         }
         conn.close();
@@ -731,18 +887,18 @@ int query(const Args &a, QTextStream &out, QTextStream &err)
     if (!QStringList{ "table", "csv", "tsv", "json" }.contains(format)) { err << "qivot-cli: --format is table, csv, tsv or json\n"; return Failed; }
 
     DatabaseSession s; Opened keep; QString error;
-    if (!openDb(a.positional.at(1), s, keep, a.value("history", "qivot_migrations"), error)) { err << "qivot-cli: " << error << '\n'; return Failed; }
+    if (!openDb(a.positional.at(1), s, keep, a.value("history", "qivot_migrations"), error)) { err << errorTag() << error << '\n'; return Failed; }
 
     QSqlQuery q(QSqlDatabase::database(s.connectionName()));
     q.setForwardOnly(true);
     if (!q.exec(a.positional.at(2))) {
-        err << "qivot-cli: " << q.lastError().text().trimmed() << '\n';
+        err << errorTag() << q.lastError().text().trimmed() << '\n';
         return Failed;
     }
     const QString path = a.value("output");
     if (!path.isEmpty() && (format == QLatin1String("csv") || format == QLatin1String("json"))) {
         const QVariantMap r = DataTransfer::write(q, path, format);    // streams, for big results
-        if (!r.value("ok").toBool()) { err << "qivot-cli: " << r.value("error").toString() << '\n'; return Failed; }
+        if (!r.value("ok").toBool()) { err << errorTag() << r.value("error").toString() << '\n'; return Failed; }
         err << "wrote " << r.value("rows").toLongLong() << " rows to " << QDir::toNativeSeparators(path) << '\n';
         return Ok;
     }
@@ -781,7 +937,14 @@ int query(const Args &a, QTextStream &out, QTextStream &err)
             rows << r;
         }
         count = rows.size();
-        text = table(header, rows) + QStringLiteral("(%1 %2)\n").arg(count).arg(count == 1 ? "row" : "rows");
+        const bool toTerminal = path.isEmpty() || path == QLatin1String("-");
+        text = table(header, rows, 0, [toTerminal](int row, int, const QString &v) {
+                   if (!toTerminal) return v;
+                   return row < 0 ? ink("1;36", v) : v == QLatin1String("NULL") ? ink("2", v) : v;
+               })
+             + (toTerminal ? ink("2", QStringLiteral("(%1 %2)").arg(count).arg(count == 1 ? "row" : "rows"))
+                           : QStringLiteral("(%1 %2)").arg(count).arg(count == 1 ? "row" : "rows"))
+             + QLatin1Char('\n');
     } else {
         const QChar d = format == QLatin1String("csv") ? QLatin1Char(',') : QLatin1Char('\t');
         QStringList h;
@@ -814,12 +977,43 @@ int drivers(const Args &, QTextStream &out, QTextStream &)
 
 } // namespace
 
+void setColors(bool out, bool err)
+{
+    g_colorOut = out;
+    g_colorErr = err;
+}
+
+void useTerminal()
+{
+    const QString force = qEnvironmentVariable("FORCE_COLOR");
+    const bool forced = qEnvironmentVariableIsSet("FORCE_COLOR") && force != QLatin1String("0");
+    const bool off = !qEnvironmentVariable("NO_COLOR").isEmpty() || qEnvironmentVariable("TERM") == QLatin1String("dumb");
+#ifdef Q_OS_WIN
+    const bool outTty = _isatty(_fileno(stdout)), errTty = _isatty(_fileno(stderr));
+#else
+    const bool outTty = isatty(fileno(stdout)), errTty = isatty(fileno(stderr));
+#endif
+    const bool out = forced || (!off && outTty), err = forced || (!off && errTty);
+#ifdef Q_OS_WIN
+    if (out || err) {
+        SetConsoleOutputCP(CP_UTF8);          // the banner's block characters
+        for (const DWORD which : { STD_OUTPUT_HANDLE, STD_ERROR_HANDLE }) {
+            const HANDLE h = GetStdHandle(which);
+            DWORD mode = 0;
+            if (GetConsoleMode(h, &mode))
+                SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
+    }
+#endif
+    setColors(out, err);
+}
+
 int run(const QStringList &argv, QTextStream &out, QTextStream &err)
 {
     Args a;
     QString error;
     if (!parse(argv, a, error)) {
-        err << "qivot-cli: " << error << "\n(qivot-cli --help lists the commands)\n";
+        err << errorTag() << error << "\n(qivot-cli --help lists the commands)\n";
         return Failed;
     }
     if (a.has("version")) {
@@ -828,7 +1022,7 @@ int run(const QStringList &argv, QTextStream &out, QTextStream &err)
     }
     const QString command = a.positional.value(0);
     if (a.has("help") || command.isEmpty() || command == QLatin1String("help")) {
-        out << kUsage;
+        out << usage();
         return command.isEmpty() && !a.has("help") ? Failed : Ok;
     }
 

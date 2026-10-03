@@ -248,6 +248,29 @@ private slots:
         QCOMPARE(QJsonDocument::fromJson(r.out.toUtf8()).object().value("tables").toArray().size(), 1);  // just the history
     }
 
+    void colours()
+    {
+        // Plain unless asked: what tests, pipes and files see.
+        QVERIFY(!cli({ "--help" }).out.contains("\x1b["));
+
+        QivotCli::setColors(true, true);
+        Run r = cli({ "--help" });
+        QVERIFY(r.out.contains("\x1b["));
+        QVERIFY(r.out.contains(QString::fromUtf16(u"\u2588\u2588\u2557")));       // the banner
+        QVERIFY(r.out.contains("migrate"));
+        r = cli({ "diff", m_changed, m_shop });
+        QVERIFY(r.out.contains("\x1b[32mAdd column book.subtitle\x1b[0m"));
+        QVERIFY(cli({ "inspect", "nope.db" }).err.startsWith("\x1b[1;31mqivot-cli: "));
+        // Never in files, JSON or --sql.
+        QVERIFY(!cli({ "inspect", m_shop, "--json" }).out.contains("\x1b["));
+        QVERIFY(!cli({ "diff", m_changed, m_shop, "--sql" }).out.contains("\x1b["));
+        QCOMPARE(cli({ "query", m_shop, "SELECT 1 AS a", "-o", path("q.txt") }).code, int(QivotCli::Ok));
+        QFile f(path("q.txt"));
+        QVERIFY(f.open(QIODevice::ReadOnly));
+        QVERIFY(!f.readAll().contains("\x1b["));
+        QivotCli::setColors(false, false);
+    }
+
     void drivers()
     {
         const Run r = cli({ "drivers" });
