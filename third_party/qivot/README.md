@@ -7,7 +7,7 @@ vendored as the amalgamated header Qivot publishes in `dist/qivot.hpp`.
 `drivers/duckdb` is Qivot's Qt driver for DuckDB, compiled into Studio when
 DuckDB is (see `cmake/duckdb.cmake`).
 
-From Qivot commit `bff3be2` (2026-10-02), with its DuckDB driver from
+From Qivot commit `d97fd66` (2026-10-03), with its DuckDB driver from
 `drivers/duckdb` (read-only opening and rows converted as they're read). To update:
 
 ```bash
