@@ -10,6 +10,14 @@ import QivotStudio.Core 1.0
 Item {
     id: pane
     readonly property alias db: db
+    readonly property alias redis: redis
+    // What the window's tab shows, whichever is open here.
+    readonly property bool anyOpen: db.isOpen || redis.isOpen
+    readonly property string tabTitle: db.isOpen ? db.displayName : redis.isOpen ? redis.displayName : ""
+    readonly property string tabDialect: db.isOpen ? db.dialect : redis.isOpen ? "redis" : ""
+    readonly property string tabDetail: db.isOpen ? db.dialectName + " · " + db.location
+                                      : redis.isOpen ? "Redis · " + redis.location : ""
+    function closeAll() { db.close(); redis.close() }
     signal buildFinished()                   // --build: --shot waits for this
 
     // From the command line (Main.qml passes them to the first pane only).
@@ -79,14 +87,34 @@ Item {
     }
 
     Component.onCompleted: {
-        if (startupConnection.type) db.connectTo(startupConnection)
+        if (startupConnection.type === "redis") redis.connectTo(startupConnection)
+        else if (startupConnection.type) db.connectTo(startupConnection)
         else if (startupFile.length) db.open(startupFile)
         else if (startupSample) db.openSample(startupSampleId)
     }
 
     OpenDialog { id: openDialog; onPicked: function (file) { db.open(file) } }
 
-    ConnectDialog { id: connectDialog; database: db }
+    ConnectDialog { id: connectDialog; database: db; redis: redis }
+
+    // A Redis server, instead of a database (RedisView).
+    Redis { id: redis }
+    Loader {
+        anchors.fill: parent
+        z: 3
+        active: redis.isOpen
+        visible: active
+        sourceComponent: Rectangle {
+            color: Theme.window
+            RedisView {
+                anchors.fill: parent
+                redis: pane.redis
+                initialKey: pane.startupTable
+                initialMode: pane.startupView
+                onCloseRequested: pane.redis.close()
+            }
+        }
+    }
 
     // Changes need the user's say-so: requestChanges(then) asks once, then runs `then`.
     AllowChangesDialog {
@@ -109,7 +137,7 @@ Item {
 
     WelcomeView {
         anchors.fill: parent
-        visible: !db.isOpen && !pane.browsingSamples
+        visible: !db.isOpen && !redis.isOpen && !pane.browsingSamples
         error: db.error
         onOpenRequested: openDialog.open()
         onSamplesRequested: pane.browsingSamples = true

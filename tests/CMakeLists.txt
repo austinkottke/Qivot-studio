@@ -58,6 +58,10 @@ add_executable(tst_querytools tst_querytools.cpp)
 target_link_libraries(tst_querytools PRIVATE Qt::Test studiocore)
 add_test(NAME querytools COMMAND tst_querytools)
 
+add_executable(tst_redis tst_redis.cpp)
+target_link_libraries(tst_redis PRIVATE Qt::Test studiocore)
+add_test(NAME redis COMMAND tst_redis)
+
 if(STUDIO_HAS_DUCKDB)
     add_executable(tst_duckdb tst_duckdb.cpp)
     target_link_libraries(tst_duckdb PRIVATE Qt::Test studiocore)

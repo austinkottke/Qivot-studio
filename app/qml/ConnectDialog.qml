@@ -10,6 +10,7 @@ import QivotUI 1.0
 Popup {
     id: root
     property var database
+    property var redis                        // a Redis server connects here instead
     property bool busy: false
 
     readonly property var types: [
@@ -19,10 +20,13 @@ Popup {
           sample: { port: 53306, user: "root", password: "qivot" } },
         { key: "sqlserver", label: "SQL Server", port: 1433, user: "sa",
           sample: { port: 51433, user: "sa", password: "Qivot_Samples1" } },
+        { key: "redis",     label: "Redis",      port: 6379, user: "", sample: null },
     ]
+    readonly property bool isRedis: type.key === "redis"
     property int typeIndex: 0
     readonly property var type: types[typeIndex]
-    readonly property bool driverAvailable: database ? database.availableTypes[type.key] === true : true
+    readonly property bool driverAvailable: isRedis || (database ? database.availableTypes[type.key] === true : true)
+    readonly property string currentError: isRedis ? (redis ? redis.error : "") : (database ? database.error : "")
     readonly property var servers: ConnectionHistory.entries.filter(function (e) { return e.kind === "server" }).slice(0, 8)
 
     modal: true
@@ -58,6 +62,10 @@ Popup {
             s.trust = sslTrust
             return s.mode === "on" && s.trust ? null : s       // the defaults: nothing to say
         }
+        if (type.key === "redis") {
+            if (sslMode !== "on") return null
+            return { mode: "on", trust: sslTrust }
+        }
         if (type.key === "postgres" && sslMode.length) s.mode = sslMode
         if (type.key === "mysql") { if (sslMode !== "on") return null; s.mode = "on" }
         if (caFile.text.trim().length) s.ca = caFile.text.trim()
@@ -71,7 +79,8 @@ Popup {
     }
     // Everything typed, as DatabaseSession.connectTo takes it.
     function collect(withPassword) {
-        const s = { type: type.key, host: host.text, port: Number(port.text), database: databaseName.text, user: user.text }
+        const s = { type: type.key, host: host.text, port: Number(port.text),
+                    database: isRedis ? Number(databaseName.text || 0) : databaseName.text, user: user.text }
         if (withPassword) s.password = password.text
         const ssl = sslSettings(), ssh = sshSettings()
         if (ssl) s.ssl = ssl
@@ -82,12 +91,12 @@ Popup {
     function fill(f) {
         host.text = f.host || "localhost"
         port.text = String(f.port || type.port)
-        databaseName.text = f.database || ""
-        user.text = f.user || type.user
+        databaseName.text = f.database !== undefined && f.database !== null ? String(f.database) : ""
+        user.text = f.user !== undefined ? f.user : type.user
         password.text = ""
         const ssl = f.ssl || {}
         sslMode = type.key === "mysql" ? (ssl.mode === "on" || ssl.ca ? "on" : "") : (ssl.mode || "")
-        sslTrust = ssl.trust === undefined ? true : ssl.trust
+        sslTrust = ssl.trust === undefined ? type.key !== "redis" : ssl.trust
         caFile.text = ssl.ca || ""; certFile.text = ssl.cert || ""; keyFile.text = ssl.key || ""
         const ssh = f.ssh || {}
         useSsh = !!ssh.host
@@ -146,6 +155,7 @@ Popup {
     // published test logins, filled in for one of the sample databases.
     property string filledSample: ""          // the sample useSample last filled in
     function useSample(id) {
+        if (!type.sample) return
         filledSample = id
         host.text = "localhost"
         port.text = String(type.sample.port)
@@ -160,11 +170,11 @@ Popup {
         busy = true
         // Let "Connecting…" paint before the (blocking) connection attempt.
         Qt.callLater(() => {
-            const ok = database.connectTo(collect(true))
+            const ok = isRedis ? redis.connectTo(collect(true)) : database.connectTo(collect(true))
             busy = false
             if (!ok) return
             save()
-            const id = ConnectionHistory.remember(database.connectionSettings)
+            const id = ConnectionHistory.remember(isRedis ? redis.connectionSettings() : database.connectionSettings)
             if (saveIt.on) ConnectionHistory.setSaved(id, true, saveName.text)
             root.close()
         })
@@ -226,6 +236,7 @@ Popup {
         Column {
             width: form.inner
             spacing: 6
+            visible: !root.isRedis
             Text {
                 text: "Or open a sample on the sample servers:"
                 color: Theme.textSecondary
@@ -263,10 +274,17 @@ Popup {
                 onAccepted: root.connect()
             }
         }
-        TextBox { id: databaseName; width: form.inner; label: "Database"; placeholder: "e.g. pagila"; onAccepted: root.connect() }
+        TextBox {
+            id: databaseName; width: form.inner
+            label: root.isRedis ? "Database number" : "Database"
+            placeholder: root.isRedis ? "0" : "e.g. pagila"
+            inputMethodHints: root.isRedis ? Qt.ImhDigitsOnly : Qt.ImhNone
+            onAccepted: root.connect()
+        }
         Row {
             spacing: 10
-            TextBox { id: user; width: (form.inner - 10) / 2; label: "User"; onAccepted: root.connect() }
+            TextBox { id: user; width: (form.inner - 10) / 2; label: root.isRedis ? "User (ACL, optional)" : "User"
+                      placeholder: root.isRedis ? "default" : ""; onAccepted: root.connect() }
             TextBox { id: password; width: (form.inner - 10) / 2; label: "Password"; password: true; onAccepted: root.connect() }
         }
 
@@ -292,10 +310,16 @@ Popup {
                 onActivated: (i) => root.sslMode = root.pgModes[i].key
             }
             Toggle {
-                visible: root.type.key === "mysql"
+                visible: root.type.key === "mysql" || root.isRedis
                 label: root.sslMode === "on" ? "TLS on" : "TLS off"
                 on: root.sslMode === "on"
                 onToggled: root.sslMode = root.sslMode === "on" ? "" : "on"
+            }
+            Toggle {
+                visible: root.isRedis && root.sslMode === "on"
+                label: "Trust the server's certificate as it is (self-signed)"
+                on: root.sslTrust
+                onToggled: root.sslTrust = !root.sslTrust
             }
             Row {
                 visible: root.type.key === "sqlserver"
@@ -320,6 +344,8 @@ Popup {
                 font.pixelSize: Theme.fontSmall + 1
                 text: root.type.key === "postgres"
                       ? "Default tries TLS and falls back to none. Verify CA checks the certificate against the CA file; Verify full checks the host name too."
+                      : root.isRedis
+                        ? "TLS needs the server set up for it (often port 6380). The certificate is checked against this computer's trusted ones unless trusted as it is."
                       : root.type.key === "mysql"
                         ? "MySQL's drivers turn TLS on when there's a certificate to check the server with: give the server's CA file."
                         : "On encrypts (and, unless trusted as it is, checks the certificate); Strict uses TDS 8 and always checks."
@@ -327,7 +353,7 @@ Popup {
             Column {
                 width: parent.width
                 spacing: 10
-                visible: root.type.key !== "sqlserver" && (root.type.key === "postgres" || root.sslMode === "on")
+                visible: root.type.key !== "sqlserver" && !root.isRedis && (root.type.key === "postgres" || root.sslMode === "on")
                 TextBox { id: caFile; width: parent.width; label: "CA certificate file"; placeholder: "/path/to/ca.pem" }
                 Row {
                     spacing: 10
@@ -398,16 +424,18 @@ Popup {
         }
         Text {
             width: form.inner
-            visible: root.database && root.database.error.length > 0 && !root.busy
+            visible: root.currentError.length > 0 && !root.busy
             wrapMode: Text.WordWrap
-            text: root.database ? root.database.error : ""
+            text: root.currentError
             color: Theme.danger
             font.pixelSize: Theme.fontBody
         }
         Text {
             width: form.inner
             wrapMode: Text.WordWrap
-            text: root.type.key === "sqlserver"
+            text: root.isRedis
+                  ? "Redis has no read-only session: Studio refuses any command that writes until you allow changes. To be certain, use an ACL user that can only read."
+                  : root.type.key === "sqlserver"
                   ? "Studio never writes to the database. SQL Server has no read-only session setting, so to be certain, sign in with a read-only login."
                   : "The connection is made read-only on the server: nothing can be changed through it."
             color: Theme.textTertiary

@@ -62,6 +62,8 @@ Q_IMPORT_QML_PLUGIN(QivotUIPlugin)
 #include "queryplan.h"
 #include "sqlcompleter.h"
 #include "gridtools.h"
+#include "redissession.h"
+#include "listtablemodel.h"
 #include "connectionhistory.h"
 #include "schemadesign.h"
 #include "querymodel.h"
@@ -113,6 +115,8 @@ void registerQt5Types()
     qmlRegisterType<QueryLibrary>(uri, 1, 0, "QueryLibrary");
     qmlRegisterType<SqlCompleter>(uri, 1, 0, "SqlCompleter");
     qmlRegisterType<QueryPlan>(uri, 1, 0, "QueryPlan");
+    qmlRegisterType<RedisSession>(uri, 1, 0, "Redis");
+    qmlRegisterType<ListTableModel>(uri, 1, 0, "ListTable");
     qmlRegisterSingletonType<DiagramGeometry>(uri, 1, 0, "DiagramGeometry", createSingleton<DiagramGeometry>);
     qmlRegisterSingletonType<Prefs>(uri, 1, 0, "Prefs", createSingleton<Prefs>);
     qmlRegisterSingletonType<GridTools>(uri, 1, 0, "GridTools", createSingleton<GridTools>);

@@ -14,6 +14,9 @@ set(STUDIOCORE_SOURCES
     gridtools.h       gridtools.cpp
     connectionhistory.h connectionhistory.cpp
     sshtunnel.h       sshtunnel.cpp
+    redisclient.h     redisclient.cpp
+    redissession.h    redissession.cpp
+    listtablemodel.h  listtablemodel.cpp
     queryplan.h       queryplan.cpp
     rowsmodel.h       rowsmodel.cpp
     erlayout.h        erlayout.cpp

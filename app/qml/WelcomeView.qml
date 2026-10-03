@@ -127,7 +127,7 @@ Rectangle {
                         Text {
                             anchors.centerIn: parent
                             text: { const t = modelData.settings.type
-                                    return t === "postgres" ? "PG" : t === "mysql" ? "MY" : t === "sqlserver" ? "MS" : t === "duckdb" ? "DK" : "DB" }
+                                    return t === "postgres" ? "PG" : t === "mysql" ? "MY" : t === "sqlserver" ? "MS" : t === "duckdb" ? "DK" : t === "redis" ? "RD" : "DB" }
                             color: modelData.kind === "file" ? Theme.textSecondary : Theme.accent
                             font.pixelSize: 10; font.weight: Font.Bold
                         }

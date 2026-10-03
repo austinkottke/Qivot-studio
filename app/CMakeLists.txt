@@ -29,6 +29,7 @@ set(STUDIO_QML_FILES
     qml/ProfileView.qml
     qml/SqlTab.qml
     qml/DatabasePane.qml
+    qml/RedisView.qml
 )
 
 # The icon (tools/make-icon.py): .icns in the macOS bundle, .ico in the Windows

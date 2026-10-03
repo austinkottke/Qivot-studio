@@ -11,7 +11,7 @@ ApplicationWindow {
     minimumWidth: 860; minimumHeight: 520
     visible: true
     color: Theme.window
-    title: current && current.db.isOpen ? current.db.displayName + " — Qivot Studio" : "Qivot Studio"
+    title: current && current.anyOpen ? current.tabTitle + " — Qivot Studio" : "Qivot Studio"
 
     // Set by main.cpp from the command line.
     property string startupFile: ""
@@ -56,7 +56,7 @@ ApplicationWindow {
     }
     function closeTab(i) {
         const p = paneRepeater.itemAt(i)
-        if (tabs.count <= 1) { if (p) p.db.close(); return }      // the last tab stays, on the welcome screen
+        if (tabs.count <= 1) { if (p) p.closeAll(); return }      // the last tab stays, on the welcome screen
         tabs.remove(i)
         if (currentIndex >= tabs.count) currentIndex = tabs.count - 1
         else if (i < currentIndex) currentIndex--
@@ -68,7 +68,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Shift+["; onActivated: win.currentIndex = (win.currentIndex + tabs.count - 1) % tabs.count }
 
     // Shown once there's something to switch between.
-    readonly property bool showTabs: tabs.count > 1 || (current !== null && current.db.isOpen)
+    readonly property bool showTabs: tabs.count > 1 || (current !== null && current.anyOpen)
     Rectangle {
         id: tabStrip
         anchors { left: parent.left; right: parent.right; top: parent.top }
@@ -92,7 +92,7 @@ ApplicationWindow {
                         id: chip
                         readonly property var p: paneRepeater.count > index ? paneRepeater.itemAt(index) : null
                         readonly property bool on: index === win.currentIndex
-                        readonly property string dialect: p && p.db.isOpen ? p.db.dialect : ""
+                        readonly property string dialect: p ? p.tabDialect : ""
                         y: 4
                         height: 28
                         width: Math.min(240, label.implicitWidth + badge.width + 52)
@@ -109,7 +109,8 @@ ApplicationWindow {
                             Text {
                                 anchors.centerIn: parent
                                 text: chip.dialect === "postgres" ? "PG" : chip.dialect === "mysql" ? "MY"
-                                    : chip.dialect === "sqlserver" ? "MS" : chip.dialect === "duckdb" ? "DK" : "DB"
+                                    : chip.dialect === "sqlserver" ? "MS" : chip.dialect === "duckdb" ? "DK"
+                                    : chip.dialect === "redis" ? "RD" : "DB"
                                 color: chip.dialect === "sqlite" ? Theme.textSecondary : Theme.accent
                                 font.pixelSize: 9; font.weight: Font.Bold
                             }
@@ -118,7 +119,7 @@ ApplicationWindow {
                             id: label
                             anchors { left: badge.right; leftMargin: badge.visible ? 7 : 4; verticalCenter: parent.verticalCenter }
                             width: Math.min(implicitWidth, 170)
-                            text: chip.p && chip.p.db.isOpen ? chip.p.db.displayName : "New tab"
+                            text: chip.p && chip.p.anyOpen ? chip.p.tabTitle : "New tab"
                             color: chip.on ? Theme.text : Theme.textSecondary
                             font.pixelSize: Theme.fontBody
                             font.weight: chip.on ? Font.DemiBold : Font.Normal
@@ -135,8 +136,8 @@ ApplicationWindow {
                             }
                         }
                         HoverHandler { id: chipHover }
-                        ToolTip.visible: chipHover.hovered && chip.p && chip.p.db.isOpen; ToolTip.delay: 700
-                        ToolTip.text: chip.p && chip.p.db.isOpen ? chip.p.db.dialectName + " · " + chip.p.db.location : ""
+                        ToolTip.visible: chipHover.hovered && chip.p && chip.p.anyOpen; ToolTip.delay: 700
+                        ToolTip.text: chip.p ? chip.p.tabDetail : ""
                         Rectangle {
                             anchors { right: parent.right; rightMargin: 6; verticalCenter: parent.verticalCenter }
                             width: 18; height: 18; radius: 4

@@ -137,10 +137,14 @@ QVariantMap ConnectionHistory::decorate(const QVariantMap &stored) const
         e.insert(QStringLiteral("kind"), QStringLiteral("file"));
         e.insert(QStringLiteral("missing"), !fi.exists());
     } else {
-        const QString kind = type == QLatin1String("postgres") ? QStringLiteral("PostgreSQL")
+        const QString kind = type == QLatin1String("redis") ? QStringLiteral("Redis")
+                           : type == QLatin1String("postgres") ? QStringLiteral("PostgreSQL")
                            : type == QLatin1String("mysql")    ? QStringLiteral("MySQL")
                            : type == QLatin1String("sqlserver") ? QStringLiteral("SQL Server") : type;
-        title = s.value(QStringLiteral("database")).toString();
+        title = type == QLatin1String("redis")
+                    ? s.value(QStringLiteral("host")).toString() + QLatin1Char(':') + QString::number(s.value(QStringLiteral("port")).toInt())
+                          + (s.value(QStringLiteral("database")).toInt() ? QStringLiteral(" · db ") + s.value(QStringLiteral("database")).toString() : QString())
+                    : s.value(QStringLiteral("database")).toString();
         detail = QStringLiteral("%1 · %2@%3:%4").arg(kind, s.value(QStringLiteral("user")).toString(),
                                                       s.value(QStringLiteral("host")).toString())
                      .arg(s.value(QStringLiteral("port")).toInt());

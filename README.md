@@ -1,6 +1,6 @@
 <h1 align="center">Qivot Studio</h1>
 
-<p align="center"><strong>Explore, design and code against any database: SQLite, DuckDB, PostgreSQL, MySQL and SQL Server.</strong></p>
+<p align="center"><strong>Explore, design and code against any database: SQLite, DuckDB, PostgreSQL, MySQL, SQL Server and Redis.</strong></p>
 
 <p align="center">
   <a href="https://github.com/austinkottke/Qivot-studio/actions/workflows/build.yml"><img src="https://github.com/austinkottke/Qivot-studio/actions/workflows/build.yml/badge.svg" alt="Build"></a>
@@ -222,6 +222,14 @@ into Qivot C++ that you can build, test and run without leaving Studio.
   place, screens, query tabs and results while you switch between them.
 - **DuckDB files** open read-only like SQLite ones, recognised by their header:
   structure, keys and views, data, profiles, queries and DuckDB's own plans.
+- **Redis**: browse the keys (a pattern, a page at a time, each with its type
+  and TTL), see any value by type (strings as text, JSON formatted, binary as
+  hex; hashes, lists, sets, sorted sets and streams in the grid, paged), pick a
+  database, and read INFO at a glance. A console runs commands as redis-cli
+  does, read-only until you allow changes: Studio asks the server about each
+  command and refuses any that writes, and never runs ones that would block
+  (MONITOR, SUBSCRIBE, BLPOP…). TLS, ACL users and SSH tunnels work as for the
+  other servers.
 - **Saved and recent connections** on the welcome screen: files open with a
   click, servers fill in the Connect dialog. Star one to keep it. Passwords
   are never stored.
@@ -401,7 +409,7 @@ ctest --test-dir qivot-studio/build --output-on-failure
 | `--sample` | open the bookshop sample |
 | `--open-sample <id>` | open sample `bookshop`, `university`, `company` or `music` |
 | `--sample-sql <folder>` | write every sample as PostgreSQL, MySQL and SQL Server scripts |
-| `--connect <url>` | connect to a server: `postgres://user:pass@host:5432/db`, `mysql://…`, `sqlserver://…` |
+| `--connect <url>` | connect to a server: `postgres://user:pass@host:5432/db`, `mysql://…`, `sqlserver://…`, `redis://:pass@host:6379/0` |
 | `--connect-dialog` | start with the connect dialog open |
 | `--table <name>` | select a table once the file is open |
 | `--view data` | start on the Data tab (or `profile`, `cpp`, `diagram`, `design`, `export`, `structure`) |
@@ -446,7 +454,9 @@ and [Chinook](https://github.com/lerocha/chinook-database) sample databases; eac
 test is skipped unless its `STUDIO_TEST_PG` / `STUDIO_TEST_MYSQL` /
 `STUDIO_TEST_MSSQL` variable points at a server. The SSH test also needs
 `STUDIO_TEST_SSH` (an SSH server that can reach the PostgreSQL one, as
-`host:port`) and `STUDIO_TEST_SSH_KEY`.
+`host:port`) and `STUDIO_TEST_SSH_KEY`. `tests/tst_redis.cpp` uses
+`STUDIO_TEST_REDIS` (`host:port`) and `STUDIO_TEST_REDIS_PASS`, and writes to
+database 7.
 
 ## Layout
 
@@ -460,7 +470,7 @@ test is skipped unless its `STUDIO_TEST_PG` / `STUDIO_TEST_MYSQL` /
 
 ## Roadmap
 
-1. **Analyzer**: changes to DuckDB files; Redis; Redshift, ClickHouse,
+1. **Analyzer**: changes to DuckDB files; editing Redis values in place; Redshift, ClickHouse,
    Snowflake, Oracle and DB2 (through Qivot); keyboard navigation in the
    query builder.
 2. **Designer**: send a design's models to an exported project, reorder
