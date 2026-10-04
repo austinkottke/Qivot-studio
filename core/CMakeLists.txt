@@ -18,6 +18,7 @@ set(STUDIOCORE_SOURCES
     redissession.h    redissession.cpp
     listtablemodel.h  listtablemodel.cpp
     queryplan.h       queryplan.cpp
+    queryreplay.h     queryreplay.cpp
     rowsmodel.h       rowsmodel.cpp
     erlayout.h        erlayout.cpp
     diagramgeometry.h

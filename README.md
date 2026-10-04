@@ -372,6 +372,7 @@ Once changes are allowed, and always shown as SQL before they run:
 
 - **Four sample databases** to try it immediately, one click each from the welcome screen: a bookshop, a university (a circular reference, a table related to itself, a three-column composite key), a company org chart and a music store, 10,000–45,000 rows apiece. The same samples run on PostgreSQL, MySQL and SQL Server with one `docker compose` command ([tools/sample-servers](tools/sample-servers)).
 - **A command line**, [`qivot-cli`](#command-line-qivot-cli): inspect, models, projects, diffs and migrations from scripts and CI.
+- **Migration replay**: record the queries an app runs, then see which ones a migration [breaks, changes or slows down](#replay-will-these-migrations-break-the-app) before it ships.
 - Light and dark mode, following the system.
 
 ## Download
@@ -501,6 +502,60 @@ next migration, with its down step.
 qivot-cli migrate status "$DATABASE_URL" --dir migrations --exit-code   # anything pending, or edited after it ran?
 qivot-cli diff migrations:migrations app.db --exit-code                 # does the database match the migrations?
 ```
+
+### Replay: will these migrations break the app?
+
+Record what the app really runs, then replay it before and after the migrations
+you're about to ship:
+
+```bash
+QIVOT_RECORD=app.qrec ./myapp                     # Qivot writes down every query the app runs
+qivot-cli replay app.db --record app.qrec --dir migrations
+```
+
+```text
+Replayed 4 queries (253 runs recorded) on shop.db, before and after 3 pending migrations:
+  0001 isbn13
+  0002 price rise
+  0003 orders by date
+
+! 1 return different columns (a model field would silently lose its value)
+  SELECT ALL * FROM book WHERE id = :arg0 LIMIT 1 ;  (200 runs)
+    gone: isbn
+    new:  isbn13
+
+! 1 return different rows
+  SELECT ALL count(*) FROM book WHERE price > :arg0 ;  (3 runs)
+    the same number of rows, with different values
+
+^ 1 got slower
+  SELECT c.* FROM customer c WHERE (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.id) >= …  (20 runs)
+    0.17 ms -> 39 ms  (223.6x)
+    plan before:
+      SCAN c
+      CORRELATED SCALAR SUBQUERY 1
+        SEARCH o USING COVERING INDEX idx_orders_customer_placed (customer_id=?)
+    plan after:
+      SCAN c
+      CORRELATED SCALAR SUBQUERY 1
+        SCAN o
+
+= 1 unchanged
+```
+
+Every recorded query runs twice, with the values the app used: on the database as
+it is, and with the pending migrations applied. It reports queries that **fail**
+after the migrations, ones whose **result columns change** (`SELECT *` still runs
+after a rename, but the model's field comes back empty), ones that return
+**different rows**, and ones that get **slower**, with both plans. Writes run too,
+each rolled back as soon as it's timed.
+
+Nothing is changed. On SQLite both runs are on copies. On PostgreSQL and SQL Server
+it all happens inside one transaction that's rolled back at the end, but the
+migrations' schema changes lock their tables until then, so it asks for
+`--sandbox` and belongs on a staging server or a restored copy. MySQL commits schema
+changes as it goes, so it can't be replayed yet. `--exit-code` fails a CI job when
+anything breaks or changes; `--json` gives the whole report.
 
 Exit codes: 0 done, 1 differences or pending (with `--exit-code`), 2 failed.
 `qivot-cli --help` lists every option. `diff` and `migrate new` cover tables,

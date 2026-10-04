@@ -3,6 +3,7 @@
 #include "databasesession.h"
 #include "datatransfer.h"
 #include "projectexport.h"
+#include "queryreplay.h"
 #include "schemacompare.h"
 #include <qivot.hpp>
 #include <QCoreApplication>
@@ -108,6 +109,13 @@ Commands
       Run a folder of migrations with Qivot's QiMigrator: what has run, run the
       rest, undo back to version N, or accept edits to migrations that already ran.
       An SQLite file that doesn't exist yet is created by `up`.
+  replay <db> --record app.qrec --dir <dir> [--sandbox] [--json] [--exit-code]
+      Replay the queries an app ran (recorded with QIVOT_RECORD=app.qrec) against
+      the database before and after its pending migrations: which break, which
+      return different rows, which got slower, and how their plans changed.
+      Nothing is changed: SQLite runs on copies; on PostgreSQL and SQL Server it all
+      happens in a transaction that is rolled back (--sandbox: on a staging copy,
+      since schema changes lock tables until then).
   query <db> <sql> [--format table|csv|tsv|json] [-o file]
       Run a query, read-only, and print the rows.
   drivers
@@ -152,7 +160,7 @@ QString usage()
         return plain;
 
     static const QRegularExpression command(
-        QStringLiteral("^  (migrate (?:new|status|up|down|accept)|inspect|models|project|diff|query|drivers)\\b"));
+        QStringLiteral("^  (migrate (?:new|status|up|down|accept)|inspect|models|project|diff|replay|query|drivers)\\b"));
     static const QRegularExpression database(QStringLiteral("^  (path/to/file\\.db|sample:<id>|postgres://\\S+|migrations:<dir>)"));
     static const QRegularExpression tokens(
         QStringLiteral("(<[^>]+>)|(\\[[^\\]]+\\](?:\\.\\.\\.)?)|(?<![\\w-])(--?[a-z][a-z-]*)|(\\bqivot-cli\\b)"));
@@ -210,8 +218,8 @@ struct Args {
     QStringList all(const QString &name) const { return values.value(name); }
 };
 
-const QStringList kValueOptions = { "output", "dir", "from", "to", "name", "table", "format", "history" };
-const QStringList kFlags = { "json", "exit-code", "dry-run", "force", "sql", "help", "version" };
+const QStringList kValueOptions = { "output", "dir", "from", "to", "name", "table", "format", "history", "record", "slower" };
+const QStringList kFlags = { "json", "exit-code", "dry-run", "force", "sql", "help", "version", "sandbox" };
 
 bool parse(const QStringList &in, Args &args, QString &error)
 {
@@ -358,6 +366,7 @@ QString buildFromMigrations(const QString &dir, const QString &history, Opened &
                 error = QStringLiteral("can't open the scratch database");
             } else {
                 QiMigrator m(conn);
+                m.setUseUserVersion(false);   // user_version may mean anything here
                 m.setTable(history);
                 if (m.addDirectory(dir) < 0 || m.migrate() < 0)
                     error = QStringLiteral("migrations:%1: %2").arg(dir, m.lastError());
@@ -776,6 +785,7 @@ int migrate(const Args &a, QTextStream &out, QTextStream &err)
             return Failed;
         }
         QiMigrator m(conn);
+        m.setUseUserVersion(false);   // user_version may mean anything here
         m.setTable(a.value("history", "qivot_migrations"));
         if (m.addDirectory(a.value("dir")) < 0) {
             err << errorTag() << m.lastError() << '\n';
@@ -878,6 +888,140 @@ QString quoted(const QString &s, QChar delimiter)
     if (!s.contains(delimiter) && !s.contains(QLatin1Char('"')) && !s.contains(QLatin1Char('\n')) && !s.contains(QLatin1Char('\r')))
         return s;
     return QLatin1Char('"') + QString(s).replace(QLatin1String("\""), QLatin1String("\"\"")) + QLatin1Char('"');
+}
+
+// --- replay -----------------------------------------------------------------
+
+QString oneLine(const QString &sql, int width = 96)
+{
+    QString s = sql.simplified();
+    return s.size() > width ? s.left(width - 1) + QChar(0x2026) : s;
+}
+
+QString msText(double ms)
+{
+    return ms < 0 ? QStringLiteral("?") : ms < 10 ? QString::number(ms, 'f', 2) + QStringLiteral(" ms")
+                                       : QString::number(ms, 'f', 0) + QStringLiteral(" ms");
+}
+
+QJsonObject sideJson(const QueryReplay::Side &s)
+{
+    QJsonObject o{ { "ok", s.ok }, { "rows", double(s.rows) }, { "ms", s.ms } };
+    if (!s.error.isEmpty()) o.insert("error", s.error);
+    if (!s.plan.isEmpty()) { o.insert("plan", s.plan); o.insert("scans", s.scans); }
+    return o;
+}
+
+int replay(const Args &a, QTextStream &out, QTextStream &err)
+{
+    if (a.positional.size() != 2 || a.value("record").isEmpty() || a.value("dir").isEmpty()) {
+        err << "usage: qivot-cli replay <db> --record app.qrec --dir <dir> [--sandbox] [--json] [--exit-code]\n";
+        return Failed;
+    }
+    DatabaseSession s; Opened keep; QString error;
+    if (!openDb(a.positional.at(1), s, keep, a.value("history", "qivot_migrations"), error)) { err << errorTag() << error << '\n'; return Failed; }
+
+    QueryReplay::Options o;
+    o.dir = a.value("dir");
+    o.history = a.value("history", o.history);
+    o.sandbox = a.has("sandbox");
+    if (a.has("slower")) o.slower = qMax(1.1, a.value("slower").toDouble());
+    const QueryReplay::Report r = QueryReplay::run(s, a.value("record"), o);
+    if (!r.ok) { err << errorTag() << r.error << '\n'; return Failed; }
+
+    const int bad = r.count("breaks") + r.count("columns") + r.count("different");
+    const int code = a.has("exit-code") && (bad || !r.migrationError.isEmpty()) ? Differs : Ok;
+
+    if (a.has("json")) {
+        QJsonArray items;
+        for (const QueryReplay::Item &i : r.items)
+            items << QJsonObject{ { "sql", i.sql }, { "runs", double(i.runs) }, { "verdict", i.verdict },
+                                  { "columnsGone", QJsonArray::fromStringList(i.columnsGone) },
+                                  { "columnsNew", QJsonArray::fromStringList(i.columnsNew) },
+                                  { "planChanged", i.planChanged }, { "before", sideJson(i.before) }, { "after", sideJson(i.after) } };
+        QJsonObject o{ { "database", r.database }, { "dialect", r.dialect },
+                       { "migrations", QJsonArray::fromStringList(r.migrations) },
+                       { "recordedRuns", double(r.recordedRuns) }, { "skipped", r.skipped }, { "queries", items } };
+        QJsonObject other;
+        for (auto it = r.otherDrivers.constBegin(); it != r.otherDrivers.constEnd(); ++it)
+            other.insert(it.key(), it.value());
+        o.insert("recordedOnOtherDatabases", other);
+        if (!r.migrationError.isEmpty()) o.insert("migrationError", r.migrationError);
+        out << json(o);
+        return code;
+    }
+
+    out << ink("1", QStringLiteral("Replayed %1 %2").arg(r.items.size()).arg(r.items.size() == 1 ? "query" : "queries"))
+        << " (" << r.recordedRuns << " runs recorded) on " << ink("1", r.database)
+        << ", before and after " << r.migrations.size() << (r.migrations.size() == 1 ? " pending migration:\n" : " pending migrations:\n");
+    for (const QString &m : r.migrations)
+        out << "  " << ink("36", m) << '\n';
+    static const QMap<QString, QString> kinds = { { "QSQLITE", "SQLite" }, { "QPSQL", "PostgreSQL" },
+                                                  { "QMYSQL", "MySQL" }, { "QODBC", "SQL Server" }, { "QOCI", "Oracle" } };
+    for (auto it = r.otherDrivers.constBegin(); it != r.otherDrivers.constEnd(); ++it)
+        out << ink("33", QStringLiteral("\nNote: %1 of these were recorded on %2, so their SQL may not run on %3.\n")
+                             .arg(it.value()).arg(kinds.value(it.key(), it.key()), s.dialectName()));
+    if (!r.migrationError.isEmpty()) {
+        out << '\n' << ink("1;31", QStringLiteral("The migrations themselves fail")) << ", so nothing could be replayed:\n  "
+            << r.migrationError << '\n';
+        return code;
+    }
+
+    struct Group { const char *verdict, *mark, *colour, *title; };
+    static const Group groups[] = {
+        { "breaks",    "x", "1;31", "break after the migrations" },
+        { "columns",   "!", "1;31", "return different columns (a model field would silently lose its value)" },
+        { "different", "!", "1;31", "return different rows" },
+        { "slower",    "^", "1;33", "got slower" },
+        { "failing",   "-", "2",    "fail before and after (already broken, or another database's SQL)" },
+        { "fixed",     "+", "32",   "fail now and work after" },
+        { "faster",    "v", "32",   "got faster" },
+    };
+    for (const Group &g : groups) {
+        QVector<const QueryReplay::Item *> list;
+        for (const QueryReplay::Item &i : r.items)
+            if (i.verdict == QLatin1String(g.verdict)) list << &i;
+        if (list.isEmpty())
+            continue;
+        out << '\n' << ink(g.colour, QStringLiteral("%1 %2 %3").arg(QLatin1String(g.mark)).arg(list.size()).arg(QLatin1String(g.title))) << '\n';
+        for (const QueryReplay::Item *i : list) {
+            out << "  " << oneLine(i->sql) << ink("2", QStringLiteral("  (%1 %2)").arg(i->runs).arg(i->runs == 1 ? "run" : "runs")) << '\n';
+            const QString v = QLatin1String(g.verdict);
+            if (v == QLatin1String("breaks"))
+                out << "    " << ink("31", QStringLiteral("after: ")) << i->after.error << '\n';
+            else if (v == QLatin1String("fixed") || v == QLatin1String("failing"))
+                out << "    " << ink("2", QStringLiteral("before: ")) << i->before.error << '\n';
+            else if (v == QLatin1String("columns")) {
+                if (!i->columnsGone.isEmpty()) out << "    " << ink("31", QStringLiteral("gone: ")) << i->columnsGone.join(", ") << '\n';
+                if (!i->columnsNew.isEmpty())  out << "    " << ink("33", QStringLiteral("new:  ")) << i->columnsNew.join(", ") << '\n';
+            } else if (v == QLatin1String("different"))
+                out << "    " << (i->before.rows == i->after.rows
+                                    ? QStringLiteral("the same number of rows, with different values")
+                                    : QStringLiteral("%1 rows before, %2 after").arg(i->before.rows).arg(i->after.rows)) << '\n';
+            else if (v == QLatin1String("slower") || v == QLatin1String("faster"))
+                out << "    " << msText(i->before.ms) << " -> " << ink(v == QLatin1String("slower") ? "1;33" : "32", msText(i->after.ms))
+                    << QStringLiteral("  (%1x)").arg(i->before.ms > 0 ? QString::number(i->after.ms / i->before.ms, 'f', 1) : QStringLiteral("?")) << '\n';
+            if (i->planChanged && (v == QLatin1String("slower") || v == QLatin1String("faster") || v == QLatin1String("different"))) {
+                out << "    " << ink("2", QStringLiteral("plan before:")) << '\n';
+                for (const QString &l : i->before.plan.split(QLatin1Char('\n'))) out << "      " << ink("2", l) << '\n';
+                out << "    " << ink("2", QStringLiteral("plan after:")) << '\n';
+                for (const QString &l : i->after.plan.split(QLatin1Char('\n'))) out << "      " << l << '\n';
+            }
+        }
+    }
+    const int same = r.count("same");
+    int changedPlans = 0;
+    for (const QueryReplay::Item &i : r.items)
+        changedPlans += i.verdict == QLatin1String("same") && i.planChanged;
+    out << '\n' << ink("32", QStringLiteral("= %1 unchanged").arg(same));
+    if (changedPlans) out << ink("2", QStringLiteral(" (%1 with a different plan, no slower)").arg(changedPlans));
+    if (r.skipped) out << ink("2", QStringLiteral(", %1 other statements skipped (CREATE, PRAGMA, ...)").arg(r.skipped));
+    out << '\n';
+    if (bad)
+        out << ink("1;31", QStringLiteral("\n%1 of the app's queries won't work as they did after these migrations.\n").arg(bad));
+    else
+        out << ink("1;32", QStringLiteral("\nNothing the app ran breaks or changes its results.\n"));
+    return code;
 }
 
 int query(const Args &a, QTextStream &out, QTextStream &err)
@@ -1033,6 +1177,7 @@ int run(const QStringList &argv, QTextStream &out, QTextStream &err)
     else if (command == QLatin1String("diff"))    code = diff(a, out, err);
     else if (command == QLatin1String("migrate")) code = migrate(a, out, err);
     else if (command == QLatin1String("query"))   code = query(a, out, err);
+    else if (command == QLatin1String("replay"))  code = replay(a, out, err);
     else if (command == QLatin1String("drivers")) code = drivers(a, out, err);
     else err << "qivot-cli: no command " << command << "\n(qivot-cli --help lists the commands)\n";
     out.flush();

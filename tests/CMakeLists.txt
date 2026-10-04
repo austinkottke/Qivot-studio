@@ -24,6 +24,10 @@ set_tests_properties(cli_help PROPERTIES PASS_REGULAR_EXPRESSION "migrate status
 add_test(NAME app_cli COMMAND qivot-studio cli inspect sample:bookshop --table book)
 set_tests_properties(app_cli PROPERTIES PASS_REGULAR_EXPRESSION "author_id +INTEGER")
 
+add_executable(tst_replay tst_replay.cpp)
+target_link_libraries(tst_replay PRIVATE Qt::Test qivotcli)
+add_test(NAME replay COMMAND tst_replay)
+
 add_executable(tst_codegen tst_codegen.cpp)
 target_link_libraries(tst_codegen PRIVATE Qt::Test studiocore)
 add_test(NAME codegen COMMAND tst_codegen)
