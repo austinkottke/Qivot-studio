@@ -409,6 +409,12 @@ CodeGen::Model CodeGen::build(const QiTableInfo &t) const
         const QString def = sqlDefault(c.defaultValue, m_dialect);
         if (!def.isEmpty() && !c.autoIncrement)
             clauses << QStringLiteral("QiDefault(%1)").arg(cString(def));
+        // A sized text column: the app checks the size too, before the database does.
+        static const QRegularExpression sized(QStringLiteral("^\\s*N?(?:VAR)?CHAR(?:ACTER)?(?:\\s+VARYING)?\\s*\\(\\s*(\\d+)\\s*\\)"),
+                                              QRegularExpression::CaseInsensitiveOption);
+        const QRegularExpressionMatch size = sized.match(c.type);
+        if (size.hasMatch() && f.type == QLatin1String("QiField<QString>") && !inKey)
+            clauses << QStringLiteral("QiMaxLength(%1)").arg(size.captured(1));
 
         const bool keepType = !isPlainType(c.type) && !f.type.startsWith(QLatin1String("QiForeignKey"));
         if (keepType)

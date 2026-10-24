@@ -151,7 +151,7 @@ private slots:
         // String key: NOID + QiPrimary; VARCHAR(80) kept; string default quoted.
         const CodeGen::Model tag = gen.model("tag");
         QVERIFY2(tag.code.contains("QI_FIELD(slug, QiPrimary | QiNotNull)"), qPrintable(tag.code));
-        QVERIFY2(tag.code.contains("QI_FIELD_AS(label, \"VARCHAR(80)\", QiNotNull | QiDefault(\"'untitled'\"))"),
+        QVERIFY2(tag.code.contains("QI_FIELD_AS(label, \"VARCHAR(80)\", QiNotNull | QiDefault(\"'untitled'\") | QiMaxLength(80))"),
                  qPrintable(tag.code));
 
         const CodeGen::Model person = gen.model("person");
